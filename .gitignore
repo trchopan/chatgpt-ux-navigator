@@ -1,0 +1,83 @@
+######################################
+# Node / Package Managers
+######################################
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+######################################
+# Build / Distribution Artifacts
+######################################
+dist/
+build/
+out/
+.release/
+.tmp/
+.cache/
+.esbuild/
+.vite/
+.parcel-cache/
+
+######################################
+# Compiled Assets
+######################################
+*.map
+*.min.js
+*.min.css
+
+######################################
+# Chrome Extension Artifacts
+######################################
+*.crx
+*.pem
+webstore-upload/
+chrome-extension.zip
+
+######################################
+# Environment / Secrets
+######################################
+.env
+.env.*
+!.env.example
+
+######################################
+# TypeScript
+######################################
+*.tsbuildinfo
+
+######################################
+# Testing / Coverage
+######################################
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+######################################
+# Logs
+######################################
+logs/
+*.log
+
+######################################
+# Editor / IDE
+######################################
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+######################################
+# OS Files
+######################################
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Icon?
+
