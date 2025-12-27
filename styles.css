@@ -103,6 +103,35 @@
     opacity: 0.85;
 }
 
+/* Right side: nav buttons + index */
+.cgpt-nav-item .meta .right {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Small nav buttons left of #index */
+.cgpt-nav-item .navbtns {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.cgpt-nav-item .navbtn {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 7px;
+    font-size: 12px;
+    line-height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cgpt-nav-item {
+    cursor: default;
+}
+
 .cgpt-nav-item .role.user {
     color: #9ddcff;
 }

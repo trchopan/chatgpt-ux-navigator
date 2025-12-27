@@ -43,11 +43,20 @@
         return node.getAttribute(ITEM_ATTR);
     }
 
-    function scrollToNode(node) {
-        node.scrollIntoView({behavior: 'smooth', block: 'center'});
+    function flashNode(node) {
         const prevOutline = node.style.outline;
         node.style.outline = '2px solid rgba(255, 255, 255, 0.45)';
         setTimeout(() => (node.style.outline = prevOutline), 900);
+    }
+
+    function scrollToNodeTop(node) {
+        node.scrollIntoView({behavior: 'smooth', block: 'start'});
+        flashNode(node);
+    }
+
+    function scrollToNodeBottom(node) {
+        node.scrollIntoView({behavior: 'smooth', block: 'end'});
+        flashNode(node);
     }
 
     // --- Floating "Show" button ----------------------------------------------
@@ -77,22 +86,22 @@
         root.id = EXT_ID;
 
         root.innerHTML = `
-  <header>
-    <div class="title">Navigator</div>
-    <div class="controls">
-      <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">Copy Thread</button>
-      <button id="cgpt-nav-refresh" title="Refresh list">Refresh</button>
-      <button id="cgpt-nav-hide" title="Hide sidebar">Hide</button>
-    </div>
-  </header>
+		<header>
+		  <div class="title">Navigator</div>
+		  <div class="controls">
+		    <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">Copy Thread</button>
+		    <button id="cgpt-nav-refresh" title="Refresh list">Refresh</button>
+		    <button id="cgpt-nav-hide" title="Hide sidebar">Hide</button>
+		  </div>
+		</header>
 
-  <div class="filters">
-    <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
-    <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
-  </div>
+		<div class="filters">
+		  <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
+		  <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
+		</div>
 
-  <div class="list" id="cgpt-nav-list"></div>
-`;
+		<div class="list" id="cgpt-nav-list"></div>
+		`;
 
         document.documentElement.appendChild(root);
 
@@ -404,16 +413,67 @@
         deduped.forEach((e, idx) => {
             const item = document.createElement('div');
             item.className = 'cgpt-nav-item';
-            item.innerHTML = `
-        <div class="meta">
-          <span class="role ${e.role}">${e.role.toUpperCase()}</span>
-          <span class="idx">#${idx + 1}</span>
-        </div>
-        <div class="preview"></div>
-      `;
 
-            item.querySelector('.preview').textContent = e.preview;
-            item.addEventListener('click', () => scrollToNode(e.anchor));
+            // --- meta row ---
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+
+            const role = document.createElement('span');
+            role.className = `role ${e.role}`;
+            role.textContent = e.role.toUpperCase();
+
+            const right = document.createElement('div');
+            right.className = 'right';
+
+            const navbtns = document.createElement('div');
+            navbtns.className = 'navbtns';
+
+            const topBtn = document.createElement('button');
+            topBtn.className = 'navbtn nav-top';
+            topBtn.type = 'button';
+            topBtn.title = 'Go to top of this message';
+            topBtn.textContent = '↑';
+
+            const bottomBtn = document.createElement('button');
+            bottomBtn.className = 'navbtn nav-bottom';
+            bottomBtn.type = 'button';
+            bottomBtn.title = 'Go to bottom of this message';
+            bottomBtn.textContent = '↓';
+
+            navbtns.appendChild(topBtn);
+            navbtns.appendChild(bottomBtn);
+
+            const idxEl = document.createElement('span');
+            idxEl.className = 'idx';
+            idxEl.textContent = `#${idx + 1}`;
+
+            right.appendChild(navbtns);
+            right.appendChild(idxEl);
+
+            meta.appendChild(role);
+            meta.appendChild(right);
+
+            // --- preview ---
+            const preview = document.createElement('div');
+            preview.className = 'preview';
+            preview.textContent = e.preview;
+
+            item.appendChild(meta);
+            item.appendChild(preview);
+
+            // Only buttons navigate
+            topBtn.addEventListener('click', ev => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                scrollToNodeTop(e.anchor);
+            });
+
+            bottomBtn.addEventListener('click', ev => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                scrollToNodeBottom(e.anchor);
+            });
+
             listEl.appendChild(item);
         });
 
