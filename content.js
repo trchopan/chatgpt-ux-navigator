@@ -77,21 +77,22 @@
         root.id = EXT_ID;
 
         root.innerHTML = `
-      <header>
-        <div class="title">Navigator (User / Assistant)</div>
-        <div class="controls">
-          <button id="cgpt-nav-refresh" title="Refresh list">Refresh</button>
-          <button id="cgpt-nav-hide" title="Hide sidebar">Hide</button>
-        </div>
-      </header>
+  <header>
+    <div class="title">Navigator</div>
+    <div class="controls">
+      <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">Copy Thread</button>
+      <button id="cgpt-nav-refresh" title="Refresh list">Refresh</button>
+      <button id="cgpt-nav-hide" title="Hide sidebar">Hide</button>
+    </div>
+  </header>
 
-      <div class="filters">
-        <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
-        <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
-      </div>
+  <div class="filters">
+    <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
+    <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
+  </div>
 
-      <div class="list" id="cgpt-nav-list"></div>
-    `;
+  <div class="list" id="cgpt-nav-list"></div>
+`;
 
         document.documentElement.appendChild(root);
 
@@ -104,6 +105,35 @@
 
         ['#cgpt-nav-filter-user', '#cgpt-nav-filter-assistant'].forEach(sel => {
             $(sel).addEventListener('change', rebuildList);
+        });
+
+        $('#cgpt-nav-copy-thread').addEventListener('click', async () => {
+            const roleNodes = findRoleNodes(); // always copy full thread (user + assistant), regardless of filters
+
+            const parts = [];
+            for (const roleNode of roleNodes) {
+                const role = roleNode.getAttribute('data-message-author-role'); // user | assistant
+                if (role !== 'user' && role !== 'assistant') continue;
+
+                const md = getMessageMarkdown(roleNode);
+                if (!md) continue;
+
+                parts.push(role === 'user' ? '<|USER|>\n\n' : '<|ASSISTANT|>\n\n');
+                parts.push(md.trim());
+                parts.push('\n\n'); // separation between turns
+            }
+
+            const payload = parts.join('').trim() + '\n';
+
+            const ok = await writeClipboardText(payload);
+
+            // Optional: lightweight feedback without adding more UI
+            const btn = document.getElementById('cgpt-nav-copy-thread');
+            if (btn) {
+                const prev = btn.textContent;
+                btn.textContent = ok ? 'Copied' : 'Copy failed';
+                setTimeout(() => (btn.textContent = prev), 900);
+            }
         });
     }
 
@@ -145,6 +175,189 @@
         if (t2) return t2;
 
         return '';
+    }
+
+    function escapeMdText(s) {
+        return (s || '').replace(/\r\n/g, '\n');
+    }
+
+    function htmlToMarkdown(rootEl) {
+        // Minimal HTML → Markdown for common ChatGPT output.
+        // This is intentionally conservative; it favors readable Markdown over perfect fidelity.
+        const out = [];
+
+        function mdForNode(node, ctx = {listDepth: 0, olIndex: 1}) {
+            if (!node) return '';
+
+            // Text node
+            if (node.nodeType === Node.TEXT_NODE) {
+                return escapeMdText(node.nodeValue);
+            }
+
+            // Ignore non-elements
+            if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+            const tag = node.tagName.toLowerCase();
+
+            // Drop UI/hidden
+            const ariaHidden = node.getAttribute('aria-hidden');
+            if (ariaHidden === 'true') return '';
+
+            // Code blocks
+            if (tag === 'pre') {
+                const codeEl = node.querySelector('code');
+                const codeText = codeEl ? codeEl.textContent : node.textContent;
+                // Optional language class: "language-xyz"
+                let lang = '';
+                if (codeEl) {
+                    const cls = codeEl.className || '';
+                    const m = cls.match(/language-([a-z0-9_-]+)/i);
+                    if (m) lang = m[1];
+                }
+                return `\n\`\`\`${lang}\n${(codeText || '').replace(/\n$/, '')}\n\`\`\`\n`;
+            }
+
+            // Inline code
+            if (tag === 'code') {
+                // If it's inside <pre>, handled above
+                if (node.closest('pre')) return '';
+                const t = node.textContent || '';
+                // Avoid breaking backticks by using double backticks when needed
+                const needsDouble = t.includes('`');
+                return needsDouble ? `\`\`${t}\`\`` : `\`${t}\``;
+            }
+
+            // Links
+            if (tag === 'a') {
+                const text = (node.textContent || '').trim() || 'link';
+                const href = node.getAttribute('href') || '';
+                if (!href) return text;
+                return `[${text}](${href})`;
+            }
+
+            // Strong / Emphasis
+            if (tag === 'strong' || tag === 'b') {
+                return `**${childrenToMd(node, ctx).trim()}**`;
+            }
+            if (tag === 'em' || tag === 'i') {
+                return `*${childrenToMd(node, ctx).trim()}*`;
+            }
+
+            // Headings
+            if (/^h[1-6]$/.test(tag)) {
+                const level = Number(tag.slice(1));
+                const text = childrenToMd(node, ctx).trim();
+                return `\n${'#'.repeat(level)} ${text}\n\n`;
+            }
+
+            // Blockquote
+            if (tag === 'blockquote') {
+                const text = childrenToMd(node, ctx)
+                    .trim()
+                    .split('\n')
+                    .map(l => `> ${l}`)
+                    .join('\n');
+                return `\n${text}\n\n`;
+            }
+
+            // Lists
+            if (tag === 'ul' || tag === 'ol') {
+                const isOl = tag === 'ol';
+                let idx = 1;
+                const parts = [];
+                for (const li of Array.from(node.children)) {
+                    if (li.tagName && li.tagName.toLowerCase() === 'li') {
+                        const bullet = isOl ? `${idx}. ` : `- `;
+                        const inner = childrenToMd(li, {
+                            ...ctx,
+                            listDepth: ctx.listDepth + 1,
+                            olIndex: idx,
+                        }).trim();
+                        // Indent wrapped lines
+                        const indent = '  '.repeat(ctx.listDepth);
+                        const lines = inner.split('\n');
+                        const first = `${indent}${bullet}${lines[0] || ''}`;
+                        const rest = lines.slice(1).map(l => `${indent}  ${l}`);
+                        parts.push([first, ...rest].join('\n'));
+                        idx += 1;
+                    }
+                }
+                return `\n${parts.join('\n')}\n\n`;
+            }
+
+            // Paragraph / line breaks
+            if (tag === 'p') {
+                const text = childrenToMd(node, ctx).trim();
+                if (!text) return '';
+                return `\n${text}\n\n`;
+            }
+            if (tag === 'br') {
+                return '\n';
+            }
+            if (tag === 'hr') {
+                return '\n---\n';
+            }
+
+            // Default: recurse children
+            return childrenToMd(node, ctx);
+        }
+
+        function childrenToMd(el, ctx) {
+            let s = '';
+            for (const child of Array.from(el.childNodes)) {
+                s += mdForNode(child, ctx);
+            }
+            return s;
+        }
+
+        const md = mdForNode(rootEl, {listDepth: 0, olIndex: 1});
+
+        // Cleanup: collapse excessive blank lines
+        return md
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    function getMessageMarkdown(roleNode) {
+        // Prefer the rendered markdown container if present; otherwise use roleNode.
+        const content =
+            roleNode.querySelector('.markdown') ||
+            roleNode.querySelector('[data-testid="message-text"]') ||
+            roleNode;
+
+        // If there is no HTML structure (rare), fall back to innerText
+        const hasElements = content.querySelector && content.querySelector('*');
+        if (!hasElements) {
+            return clampText(content.innerText || content.textContent || '');
+        }
+
+        const md = htmlToMarkdown(content);
+        return md || clampText(content.innerText || content.textContent || '');
+    }
+
+    async function writeClipboardText(text) {
+        // Primary: async clipboard
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (_) {
+            // Fallback: execCommand (may fail on some pages)
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.top = '-1000px';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (_) {
+                return false;
+            }
+        }
     }
 
     // --- Build / rebuild list -------------------------------------------------

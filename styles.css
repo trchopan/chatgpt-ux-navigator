@@ -42,7 +42,7 @@
 
 #cgpt-nav header .controls {
     display: flex;
-    gap: 8px;
+    gap: 6px;
 }
 
 #cgpt-nav button {
