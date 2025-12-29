@@ -154,6 +154,39 @@
     word-break: break-word;
 }
 
+/* Code block index row under assistant previews */
+.cgpt-nav-item .code-indexes {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    opacity: 0.95;
+}
+
+.cgpt-nav-item .code-label {
+    font-size: 11px;
+    opacity: 0.85;
+    user-select: none;
+}
+
+.cgpt-nav-item .code-btns {
+    display: inline-flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.cgpt-nav-item .code-btn {
+    width: 22px;
+    height: 20px;
+    padding: 0;
+    border-radius: 7px;
+    font-size: 11px;
+    line-height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
 /* Optional: minimize footprint on narrow screens */
 @media (max-width: 1000px) {
     #cgpt-nav {

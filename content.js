@@ -2,6 +2,7 @@
     const EXT_ID = 'cgpt-nav';
     const SHOW_ID = 'cgpt-nav-show';
     const ITEM_ATTR = 'data-cgpt-nav-id';
+    const CODE_ATTR = 'data-cgpt-nav-code-id';
     const STORAGE_KEY = 'cgpt_nav_hidden';
 
     const ROLE_SEL = '[data-message-author-role="user"], [data-message-author-role="assistant"]';
@@ -60,6 +61,47 @@
 
     function scrollToNodeBottom(node) {
         node.scrollIntoView({behavior: 'smooth', block: 'end'});
+        flashNode(node);
+    }
+
+    function ensureCodeId(node) {
+        if (!node.hasAttribute(CODE_ATTR)) node.setAttribute(CODE_ATTR, crypto.randomUUID());
+        return node.getAttribute(CODE_ATTR);
+    }
+
+    function getMessageContentNode(roleNode) {
+        return (
+            roleNode.querySelector('.markdown') ||
+            roleNode.querySelector('[data-testid="message-text"]') ||
+            roleNode
+        );
+    }
+
+    // Return stable IDs for each code block (<pre>) inside this message.
+    function getCodeBlockIds(roleNode) {
+        const role = roleNode.getAttribute('data-message-author-role');
+        if (role !== 'assistant') return [];
+
+        const content = getMessageContentNode(roleNode);
+        if (!content || !content.querySelectorAll) return [];
+
+        const pres = Array.from(content.querySelectorAll('pre'));
+        const ids = [];
+        for (const pre of pres) {
+            const id = ensureCodeId(pre);
+            ids.push(id);
+        }
+        return ids;
+    }
+
+    function scrollToCodeBlockWithinAnchor(anchor, codeId) {
+        if (!anchor) return;
+
+        const sel = `[${CODE_ATTR}="${codeId}"]`;
+        const node = anchor.querySelector(sel) || document.querySelector(sel);
+        if (!node) return;
+
+        node.scrollIntoView({behavior: 'smooth', block: 'center'});
         flashNode(node);
     }
 
@@ -413,6 +455,36 @@
         item.appendChild(meta);
         item.appendChild(preview);
 
+        if (entry.role === 'assistant' && entry.codeIds && entry.codeIds.length > 0) {
+            const codeRow = document.createElement('div');
+            codeRow.className = 'code-indexes';
+
+            const label = document.createElement('span');
+            label.className = 'code-label';
+            label.textContent = 'Code:';
+            codeRow.appendChild(label);
+
+            const btns = document.createElement('div');
+            btns.className = 'code-btns';
+
+            entry.codeIds.forEach((codeId, i) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'code-btn';
+                b.textContent = `${i + 1}`;
+                b.title = `Go to code block ${i + 1}`;
+                b.addEventListener('click', ev => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    scrollToCodeBlockWithinAnchor(entry.anchor, codeId);
+                });
+                btns.appendChild(b);
+            });
+
+            codeRow.appendChild(btns);
+            item.appendChild(codeRow);
+        }
+
         topBtn.addEventListener('click', ev => {
             ev.preventDefault();
             ev.stopPropagation();
@@ -442,6 +514,50 @@
         const prevEl = el.querySelector('.preview');
         if (prevEl && prevEl.textContent !== entry.preview) {
             prevEl.textContent = entry.preview;
+        }
+
+        // Reconcile code index row (assistant only)
+        const existingRow = el.querySelector('.code-indexes');
+        const wantCodes = entry.role === 'assistant' && entry.codeIds && entry.codeIds.length > 0;
+
+        if (!wantCodes) {
+            if (existingRow) existingRow.remove();
+        } else {
+            // If row missing or count differs, rebuild (cheap).
+            const existingBtns = existingRow ? existingRow.querySelectorAll('.code-btn') : null;
+            const sameCount = existingBtns && existingBtns.length === entry.codeIds.length;
+
+            if (!existingRow || !sameCount) {
+                if (existingRow) existingRow.remove();
+
+                const codeRow = document.createElement('div');
+                codeRow.className = 'code-indexes';
+
+                const label = document.createElement('span');
+                label.className = 'code-label';
+                label.textContent = 'Code:';
+                codeRow.appendChild(label);
+
+                const btns = document.createElement('div');
+                btns.className = 'code-btns';
+
+                entry.codeIds.forEach((codeId, i) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'code-btn';
+                    b.textContent = `${i + 1}`;
+                    b.title = `Go to code block ${i + 1}`;
+                    b.addEventListener('click', ev => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        scrollToCodeBlockWithinAnchor(entry.anchor, codeId);
+                    });
+                    btns.appendChild(b);
+                });
+
+                codeRow.appendChild(btns);
+                el.appendChild(codeRow);
+            }
         }
     }
 
@@ -550,11 +666,23 @@
         const anchor = getAnchorNode(roleNode);
         const id = ensureNodeId(anchor);
 
+        const codeIds = getCodeBlockIds(roleNode);
+        const entry = {id, role, preview, anchor, codeIds};
+
         const existing = entryById.get(id);
         if (!existing) {
             const entry = {id, role, preview, anchor};
             entryById.set(id, entry);
             order.push(id);
+
+            // compare codeIds
+            const prevCode = existing.codeIds || [];
+            const nextCode = codeIds || [];
+            if (prevCode.length !== nextCode.length || prevCode.join(',') !== nextCode.join(',')) {
+                existing.codeIds = nextCode;
+                changed = true;
+            }
+
             renderEntryIfNeeded(entry);
             return true;
         } else {
@@ -604,7 +732,9 @@
             const id = ensureNodeId(anchor);
 
             if (!freshById.has(id)) {
-                freshById.set(id, {id, role, preview, anchor});
+                const codeIds = getCodeBlockIds(rn);
+                freshById.set(id, {id, role, preview, anchor, codeIds});
+
                 freshIds.push(id);
             }
         }
