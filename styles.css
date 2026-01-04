@@ -3,7 +3,7 @@
     position: fixed;
     top: 72px; /* leave room for ChatGPT header */
     right: 12px;
-    width: 320px;
+    width: 306px;
     max-width: 36vw;
     height: calc(100vh - 96px);
     z-index: 999999;
