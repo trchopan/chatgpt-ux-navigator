@@ -33,6 +33,62 @@
         return (s || '').replace(/\s+/g, ' ').trim();
     }
 
+    /**
+     * Finds the closest scrollable ancestor of a given DOM node.
+     * An element is considered scrollable if it has 'overflow-y: auto' or 'scroll'
+     * and its scrollHeight is greater than its clientHeight.
+     * If no such ancestor is found, it defaults to `document.documentElement` or `document.body`
+     * if they are scrollable, as these represent the main window scroll.
+     * @param {HTMLElement} node The starting node to search from.
+     * @returns {HTMLElement} The scrollable container element, or `document.documentElement` as a fallback.
+     */
+    function getScrollContainer(node) {
+        if (!node) {
+            // Default to document.documentElement if no node is provided.
+            // This fallback might still be the "window" scroll that the user suspects is wrong.
+            // However, a robust function needs a default.
+            return document.documentElement;
+        }
+
+        let current = node.parentNode;
+        while (current && current !== document.body && current !== document.documentElement) {
+            const style = getComputedStyle(current);
+            if (
+                (style.overflowY === 'auto' ||
+                    style.overflowY === 'scroll' ||
+                    style.overflow === 'auto' ||
+                    style.overflow === 'scroll') &&
+                current.scrollHeight > current.clientHeight
+            ) {
+                return current;
+            }
+            current = current.parentNode;
+        }
+
+        // Fallback to document.documentElement or document.body if no specific element is found.
+        // These correspond to the main window scrollbar.
+        if (
+            document.documentElement.scrollHeight > document.documentElement.clientHeight &&
+            (getComputedStyle(document.documentElement).overflowY === 'auto' ||
+                getComputedStyle(document.documentElement).overflowY === 'scroll' ||
+                getComputedStyle(document.documentElement).overflow === 'auto' ||
+                getComputedStyle(document.documentElement).overflow === 'scroll')
+        ) {
+            return document.documentElement;
+        }
+        if (
+            document.body.scrollHeight > document.body.clientHeight &&
+            (getComputedStyle(document.body).overflowY === 'auto' ||
+                getComputedStyle(document.body).overflowY === 'scroll' ||
+                getComputedStyle(document.body).overflow === 'auto' ||
+                getComputedStyle(document.body).overflow === 'scroll')
+        ) {
+            return document.body;
+        }
+
+        return document.documentElement; // Final fallback
+    }
+
     // Prefer a stable “turn” container; fall back to the role node itself.
     function getAnchorNode(roleNode) {
         return (
@@ -55,15 +111,44 @@
     }
 
     function scrollToNodeTop(node) {
-        node.scrollIntoView({behavior: 'smooth', block: 'start'});
+        const scrollContainer = getScrollContainer(node);
+        const rect = node.getBoundingClientRect();
+        let y;
+
+        if (scrollContainer === document.documentElement || scrollContainer === document.body) {
+            // If the scroll container is the document itself, use window offsets.
+            y = rect.top + window.pageYOffset;
+        } else {
+            // For a specific scrollable element, calculate position relative to its scroll area.
+            const containerRect = scrollContainer.getBoundingClientRect();
+            y = rect.top - containerRect.top + scrollContainer.scrollTop;
+        }
+
+        scrollContainer.scrollTo({top: y});
         flashNode(node);
     }
 
     function scrollToNodeBottom(node) {
-        node.scrollIntoView({behavior: 'smooth', block: 'end'});
+        const scrollContainer = getScrollContainer(node);
+        const rect = node.getBoundingClientRect();
+        let y;
+
+        if (scrollContainer === document.documentElement || scrollContainer === document.body) {
+            // If the scroll container is the document itself, use window offsets.
+            y = rect.bottom + window.pageYOffset - window.innerHeight;
+            scrollContainer.scrollTo({top: y});
+        } else {
+            // For a specific scrollable element, calculate position relative to its scroll area.
+            const containerRect = scrollContainer.getBoundingClientRect();
+            y =
+                rect.bottom -
+                containerRect.top +
+                scrollContainer.scrollTop -
+                scrollContainer.clientHeight;
+            scrollContainer.scrollTo({top: y});
+        }
         flashNode(node);
     }
-
     function ensureCodeId(node) {
         if (!node.hasAttribute(CODE_ATTR)) node.setAttribute(CODE_ATTR, crypto.randomUUID());
         return node.getAttribute(CODE_ATTR);
@@ -101,7 +186,19 @@
         const node = anchor.querySelector(sel) || document.querySelector(sel);
         if (!node) return;
 
-        node.scrollIntoView({behavior: 'smooth', block: 'center'});
+        const scrollContainer = getScrollContainer(node);
+        const rect = node.getBoundingClientRect();
+        let y;
+
+        // Scroll to the top of the code block, similar to scrollToNodeTop.
+        if (scrollContainer === document.documentElement || scrollContainer === document.body) {
+            y = rect.top + window.pageYOffset;
+        } else {
+            const containerRect = scrollContainer.getBoundingClientRect();
+            y = rect.top - containerRect.top + scrollContainer.scrollTop;
+        }
+
+        scrollContainer.scrollTo({top: y});
         flashNode(node);
     }
 
@@ -667,21 +764,13 @@
         const id = ensureNodeId(anchor);
 
         const codeIds = getCodeBlockIds(roleNode);
-        const entry = {id, role, preview, anchor, codeIds};
 
         const existing = entryById.get(id);
         if (!existing) {
-            const entry = {id, role, preview, anchor};
+            // Create new entry, including codeIds
+            const entry = {id, role, preview, anchor, codeIds};
             entryById.set(id, entry);
             order.push(id);
-
-            // compare codeIds
-            const prevCode = existing.codeIds || [];
-            const nextCode = codeIds || [];
-            if (prevCode.length !== nextCode.length || prevCode.join(',') !== nextCode.join(',')) {
-                existing.codeIds = nextCode;
-                changed = true;
-            }
 
             renderEntryIfNeeded(entry);
             return true;
@@ -700,6 +789,14 @@
                 existing.anchor = anchor;
                 changed = true;
             }
+            // Compare and update codeIds for the existing entry
+            const prevCode = existing.codeIds || [];
+            const nextCode = codeIds || [];
+            if (prevCode.length !== nextCode.length || prevCode.join(',') !== nextCode.join(',')) {
+                existing.codeIds = nextCode;
+                changed = true;
+            }
+
             if (changed) renderEntryIfNeeded(existing);
             return false;
         }
