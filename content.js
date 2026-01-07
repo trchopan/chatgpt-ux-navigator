@@ -969,6 +969,14 @@
                 }
             }
         });
+
+        // Add a confirmation alert for page refresh/navigation
+        window.addEventListener('beforeunload', function (e) {
+            // Cancel the event
+            e.preventDefault();
+            // Chrome requires returnValue to be set
+            e.returnValue = '';
+        });
     }
 
     init();
