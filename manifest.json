@@ -4,7 +4,14 @@
     "version": "0.1.0",
     "description": "Sticky right sidebar to quickly navigate user and system messages in ChatGPT with 3-line previews.",
     "permissions": [],
-    "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+    "host_permissions": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "http://localhost:8765/*"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
     "content_scripts": [
         {
             "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],

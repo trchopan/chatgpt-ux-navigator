@@ -233,9 +233,10 @@
       <header>
         <div class="title">Navigator</div>
         <div class="controls">
-          <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">Copy Thread</button>
-          <button id="cgpt-nav-refresh" title="Refresh list">Refresh</button>
-          <button id="cgpt-nav-hide" title="Hide sidebar">Hide</button>
+		  <button id="cgpt-nav-insert-prompt" title="Fetch http://localhost:8765/prompt and insert into chat input">✨</button>
+          <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
+          <button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
+          <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
         </div>
       </header>
 
@@ -288,6 +289,32 @@
                 const prev = btn.textContent;
                 btn.textContent = ok ? 'Copied' : 'Copy failed';
                 setTimeout(() => (btn.textContent = prev), 900);
+            }
+        });
+
+        $('#cgpt-nav-insert-prompt').addEventListener('click', async () => {
+            const btn = document.getElementById('cgpt-nav-insert-prompt');
+            const prev = btn?.textContent || 'Insert Prompt';
+
+            try {
+                if (btn) btn.textContent = 'Fetching…';
+                const promptText = await fetchLocalPrompt();
+
+                const ok = setChatInputText(promptText);
+                if (!ok) throw new Error('Could not find the chat input box');
+
+                if (btn) btn.textContent = 'Inserted';
+                setTimeout(() => {
+                    const b = document.getElementById('cgpt-nav-insert-prompt');
+                    if (b) b.textContent = prev;
+                }, 900);
+            } catch (e) {
+                if (btn) btn.textContent = 'Failed';
+                setTimeout(() => {
+                    const b = document.getElementById('cgpt-nav-insert-prompt');
+                    if (b) b.textContent = prev;
+                }, 1200);
+                console.error('[cgpt-nav] Insert Prompt failed:', e);
             }
         });
     }
@@ -484,6 +511,51 @@
                 return false;
             }
         }
+    }
+
+    function fetchLocalPrompt() {
+        return new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({type: 'cgpt-nav-fetch-prompt'}, resp => {
+                const err = chrome.runtime.lastError;
+                if (err) return reject(new Error(err.message));
+
+                if (!resp?.ok) return reject(new Error(resp?.error || 'Failed to fetch prompt'));
+                resolve(resp.text || '');
+            });
+        });
+    }
+
+    function findChatInput() {
+        const ce =
+            document.querySelector('[data-testid="prompt-textarea"][contenteditable="true"]') ||
+            document.querySelector('form [contenteditable="true"]');
+
+        if (ce) return {kind: 'contenteditable', el: ce};
+
+        return null;
+    }
+
+    function setChatInputText(text) {
+        const input = findChatInput();
+        if (!input) return false;
+
+        const t = (text ?? '').replace(/\r\n/g, '\n');
+
+        if (input.kind === 'contenteditable') {
+            const el = input.el;
+            el.focus();
+
+            // Replace full contents
+            el.textContent = t;
+
+            // Trigger input event
+            el.dispatchEvent(
+                new InputEvent('input', {bubbles: true, inputType: 'insertText', data: t})
+            );
+            return true;
+        }
+
+        return false;
     }
 
     // --- Performance-oriented rendering model ---------------------------------
