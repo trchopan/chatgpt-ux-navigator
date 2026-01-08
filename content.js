@@ -535,23 +535,83 @@
         return null;
     }
 
+    function insertViaPaste(el, text) {
+        try {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', text);
+
+            const ev = new ClipboardEvent('paste', {
+                clipboardData: dt,
+                bubbles: true,
+                cancelable: true,
+            });
+
+            return el.dispatchEvent(ev);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function fallbackInsertAsParagraphs(el, text) {
+        // Fallback: build <p> lines so serializers keep line breaks better than <br>
+        el.innerHTML = '';
+        const lines = (text || '').split('\n');
+
+        for (const line of lines) {
+            const p = document.createElement('p');
+            // keep empty lines visible
+            p.textContent = line === '' ? '\u00A0' : line;
+            el.appendChild(p);
+        }
+
+        // Nudge editor frameworks to reconcile state
+        el.dispatchEvent(
+            new InputEvent('input', {bubbles: true, inputType: 'insertFromPaste', data: text})
+        );
+    }
+
+    function escapeHtml(s) {
+        return (s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     function setChatInputText(text) {
         const input = findChatInput();
         if (!input) return false;
 
+        // Normalize newlines
         const t = (text ?? '').replace(/\r\n/g, '\n');
 
         if (input.kind === 'contenteditable') {
             const el = input.el;
             el.focus();
 
-            // Replace full contents
-            el.textContent = t;
+            // Normalize newlines
+            const t = (text ?? '').replace(/\r\n/g, '\n');
 
-            // Trigger input event
-            el.dispatchEvent(
-                new InputEvent('input', {bubbles: true, inputType: 'insertText', data: t})
-            );
+            // Clear existing content in a way editors tolerate
+            // (some editors react better if selection is inside)
+            const sel = window.getSelection();
+            if (sel && el.firstChild) {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+
+            // Preferred: simulate a plain-text paste so ChatGPT updates its internal model
+            const pasted = insertViaPaste(el, t);
+
+            if (!pasted) {
+                // Fallback: paragraphs (better than <br> for many rich editors)
+                fallbackInsertAsParagraphs(el, t);
+            }
+
             return true;
         }
 

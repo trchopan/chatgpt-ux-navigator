@@ -91,17 +91,17 @@ async function buildPrompt(): Promise<string> {
         try {
             content = await Bun.file(absPath).text();
         } catch (e) {
-			console.error(e)
+            console.error(e);
             // You can choose whether to fail hard; here we include an error marker.
             content = `[ERROR: Unable to read file: ${absPath}]`;
         }
 
         parts.push('');
-        parts.push(`-- ${absPath} --`);
+        parts.push(`--- ${absPath} ---`);
         parts.push('');
         parts.push(content.replace(/\r\n/g, '\n').trimEnd());
         parts.push('');
-        parts.push('---');
+		parts.push(`--- END OF ${absPath} ---`);
     }
 
     // Ensure a trailing newline (nice for textareas/copy)
