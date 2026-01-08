@@ -1,111 +1,73 @@
-import {parse as parseYaml} from 'yaml';
+import {join, resolve, isAbsolute} from 'node:path';
+import {readdir} from 'node:fs/promises';
 
 const PORT = 8765;
 
-// Path to the markdown file that contains front matter + body
-// You can change this to whatever you want.
-const PROMPT_MD_PATH = process.env.PROMPT_MD_PATH || './prompt.md';
+// Usage:
+//   bun run index.ts <prompts-dir> <files-root>
+//
+// <prompts-dir> : where .md prompt files live
+// <files-root>  : root directory used to resolve @file inclusions
+//
+// Defaults:
+//   prompts-dir -> cwd
+//   files-root  -> cwd
+const PROMPTS_DIR = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
+const FILES_ROOT = process.argv[3] ? resolve(process.argv[3]) : process.cwd();
 
-type FrontMatter = {
-    files?: string[];
-};
-
-function isAbsolutePath(p: string) {
-    // Works for Unix/macOS; add Windows support if needed later.
-    return p.startsWith('/');
+function isPathInsideRoot(absPath: string, absRoot: string): boolean {
+    // Ensure trailing separator for correct prefix matching (e.g. /root2 not matching /root)
+    const root = absRoot.endsWith('/') || absRoot.endsWith('\\') ? absRoot : absRoot + '/';
+    const path = absPath.replace(/\\/g, '/');
+    const normRoot = root.replace(/\\/g, '/');
+    return path === normRoot.slice(0, -1) || path.startsWith(normRoot);
 }
 
-function resolvePath(baseFile: string, filePath: string) {
-    // If front matter uses relative paths, resolve relative to the prompt markdown file location.
-    if (isAbsolutePath(filePath)) return filePath;
-
-    const baseDir = baseFile.replace(/\/[^/]+$/, ''); // dirname without importing path
-    const joined = baseDir ? `${baseDir}/${filePath}` : filePath;
-    // Normalize simple "./" occurrences
-    return joined.replace(/\/\.\//g, '/');
-}
-
-function parseFrontMatterAndBody(md: string): {fm: FrontMatter; body: string} {
-    // Expect:
-    // +++
-    // yaml...
-    // +++
-    // body...
-    //
-    // If missing, treat entire md as body.
-    const trimmed = md.replace(/^\uFEFF/, ''); // strip BOM if present
-
-    if (!trimmed.startsWith('+++')) {
-        return {fm: {}, body: trimmed.trim()};
-    }
-
-    const lines = trimmed.split('\n');
-
-    // first line must be +++
-    if (lines.length < 3 || lines[0]?.trim() !== '+++') {
-        return {fm: {}, body: trimmed.trim()};
-    }
-
-    // find the closing +++
-    let endIdx = -1;
-    for (let i = 1; i < lines.length; i++) {
-        if (lines[i]?.trim() === '+++') {
-            endIdx = i;
-            break;
-        }
-    }
-    if (endIdx === -1) {
-        // no closing delimiter -> treat as body
-        return {fm: {}, body: trimmed.trim()};
-    }
-
-    const yamlText = lines.slice(1, endIdx).join('\n');
-    const bodyText = lines.slice(endIdx + 1).join('\n');
-
-    let fm: FrontMatter = {};
+async function buildPrompt(filePath: string): Promise<string> {
+    let md: string;
     try {
-        const parsed = parseYaml(yamlText);
-        if (parsed && typeof parsed === 'object') fm = parsed as FrontMatter;
-    } catch {
-        // invalid YAML -> ignore front matter rather than failing hard
-        fm = {};
+        md = await Bun.file(filePath).text();
+    } catch (e) {
+        return `[ERROR: Unable to read prompt file: ${filePath}]`;
     }
 
-    return {fm, body: bodyText.trim()};
-}
+    const lines = md.split('\n');
+    const processedLines: string[] = [];
 
-async function buildPrompt(): Promise<string> {
-    const md = await Bun.file(PROMPT_MD_PATH).text();
-    const {fm, body} = parseFrontMatterAndBody(md);
+    for (const line of lines) {
+        const match = line.match(/^\s*@(\S+)\s*$/);
 
-    const parts: string[] = [];
-    if (body) parts.push(body.trim());
+        if (match) {
+            const rawPath = match[1]!;
+            // Resolve @ inclusions against FILES_ROOT (unless absolute)
+            const absPath = isAbsolute(rawPath) ? rawPath : resolve(FILES_ROOT, rawPath);
 
-    const files = Array.isArray(fm.files) ? fm.files : [];
-    for (const rawPath of files) {
-        if (!rawPath || typeof rawPath !== 'string') continue;
+            let content: string;
 
-        const absPath = resolvePath(PROMPT_MD_PATH, rawPath);
-        let content: string;
+            // Basic safety: do not allow escaping FILES_ROOT for relative includes
+            if (!isAbsolute(rawPath) && !isPathInsideRoot(absPath, FILES_ROOT)) {
+                content = `[ERROR: Path escapes FILES_ROOT: ${absPath}]`;
+            } else {
+                try {
+                    content = await Bun.file(absPath).text();
+                } catch (e) {
+                    console.error(`Error reading file ${absPath}:`, e);
+                    content = `[ERROR: Unable to read file: ${absPath}]`;
+                }
+            }
 
-        try {
-            content = await Bun.file(absPath).text();
-        } catch (e) {
-            console.error(e);
-            // You can choose whether to fail hard; here we include an error marker.
-            content = `[ERROR: Unable to read file: ${absPath}]`;
+            processedLines.push('');
+            processedLines.push(`--- ${absPath} ---`);
+            processedLines.push('');
+            processedLines.push(content.replace(/\r\n/g, '\n').trimEnd());
+            processedLines.push('');
+            processedLines.push(`--- END OF ${absPath} ---`);
+        } else {
+            processedLines.push(line);
         }
-
-        parts.push('');
-        parts.push(`--- ${absPath} ---`);
-        parts.push('');
-        parts.push(content.replace(/\r\n/g, '\n').trimEnd());
-        parts.push('');
-		parts.push(`--- END OF ${absPath} ---`);
     }
 
-    // Ensure a trailing newline (nice for textareas/copy)
-    return parts.join('\n').trimEnd() + '\n';
+    return processedLines.join('\n').trimEnd() + '\n';
 }
 
 Bun.serve({
@@ -123,9 +85,28 @@ Bun.serve({
             return new Response(null, {status: 204, headers: corsHeaders});
         }
 
-        if (req.method === 'GET' && url.pathname === '/prompt') {
+        if (req.method === 'GET' && url.pathname === '/list') {
             try {
-                const prompt = await buildPrompt();
+                const files = await readdir(PROMPTS_DIR);
+                const prompts = files.filter(f => f.endsWith('.md'));
+                return new Response(JSON.stringify({prompts}), {
+                    status: 200,
+                    headers: {...corsHeaders, 'Content-Type': 'application/json'},
+                });
+            } catch (e) {
+                return new Response(JSON.stringify({error: String(e)}), {
+                    status: 500,
+                    headers: {...corsHeaders, 'Content-Type': 'application/json'},
+                });
+            }
+        }
+
+        if (req.method === 'GET' && url.pathname.startsWith('/prompt/')) {
+            const filename = url.pathname.replace('/prompt/', '');
+            const fullPath = join(PROMPTS_DIR, filename);
+
+            try {
+                const prompt = await buildPrompt(fullPath);
                 return new Response(prompt, {
                     status: 200,
                     headers: {
@@ -147,10 +128,18 @@ Bun.serve({
         }
 
         if (req.method === 'GET' && url.pathname === '/') {
-            return new Response(`OK. Try GET /prompt\nUsing PROMPT_MD_PATH=${PROMPT_MD_PATH}\n`, {
-                status: 200,
-                headers: {...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8'},
-            });
+            return new Response(
+                `OK.\n` +
+                    `Prompts Directory: ${PROMPTS_DIR}\n` +
+                    `Files Root:        ${FILES_ROOT}\n\n` +
+                    `Routes:\n` +
+                    `GET /list              - List all .md prompts\n` +
+                    `GET /prompt/<filename> - Get processed content of a prompt\n`,
+                {
+                    status: 200,
+                    headers: {...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8'},
+                }
+            );
         }
 
         return new Response('Not Found', {
@@ -161,5 +150,6 @@ Bun.serve({
 });
 
 console.log(`Bun prompt server running: http://localhost:${PORT}`);
-console.log(`Prompt endpoint:           http://localhost:${PORT}/prompt`);
-console.log(`Prompt markdown source:    ${PROMPT_MD_PATH}`);
+console.log(`Serving prompts from:      ${PROMPTS_DIR}`);
+console.log(`Resolving @files from:     ${FILES_ROOT}`);
+console.log(`List endpoint:             http://localhost:${PORT}/list`);

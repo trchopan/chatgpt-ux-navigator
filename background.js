@@ -1,17 +1,37 @@
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.type !== 'cgpt-nav-fetch-prompt') return;
+const SERVER = 'http://localhost:8765';
 
-    (async () => {
-        try {
-            const res = await fetch('http://localhost:8765/prompt', {method: 'GET'});
-            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-            const text = await res.text();
-            sendResponse({ok: true, text});
-        } catch (err) {
-            sendResponse({ok: false, error: String(err?.message || err)});
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
+    try {
+      if (msg?.type === 'cgpt-nav-fetch-list') {
+        const r = await fetch(`${SERVER}/list`, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+        const data = await r.json();
+        sendResponse({ ok: true, prompts: data?.prompts || [] });
+        return;
+      }
+
+      if (msg?.type === 'cgpt-nav-fetch-prompt') {
+        const filename = msg?.filename;
+        if (!filename || typeof filename !== 'string') {
+          throw new Error('Missing filename');
         }
-    })();
+        const url = `${SERVER}/prompt/${encodeURIComponent(filename)}`;
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+        const text = await r.text();
+        sendResponse({ ok: true, text });
+        return;
+      }
 
-    // Keep the message channel open for async response
-    return true;
+      // Unknown message
+      sendResponse({ ok: false, error: 'Unknown message type' });
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e?.message || e) });
+    }
+  })();
+
+  // Required for async sendResponse
+  return true;
 });
+

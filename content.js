@@ -11,7 +11,7 @@
     function isInExtensionDom(node) {
         let n = node;
         while (n) {
-            if (n.id === EXT_ID || n.id === SHOW_ID) return true;
+            if (n.id === EXT_ID || n.id === SHOW_ID || n.id === 'cgpt-nav-prompt-menu') return true;
             n = n.parentNode;
         }
         return false;
@@ -44,9 +44,6 @@
      */
     function getScrollContainer(node) {
         if (!node) {
-            // Default to document.documentElement if no node is provided.
-            // This fallback might still be the "window" scroll that the user suspects is wrong.
-            // However, a robust function needs a default.
             return document.documentElement;
         }
 
@@ -65,8 +62,6 @@
             current = current.parentNode;
         }
 
-        // Fallback to document.documentElement or document.body if no specific element is found.
-        // These correspond to the main window scrollbar.
         if (
             document.documentElement.scrollHeight > document.documentElement.clientHeight &&
             (getComputedStyle(document.documentElement).overflowY === 'auto' ||
@@ -86,7 +81,7 @@
             return document.body;
         }
 
-        return document.documentElement; // Final fallback
+        return document.documentElement;
     }
 
     // Prefer a stable “turn” container; fall back to the role node itself.
@@ -116,10 +111,8 @@
         let y;
 
         if (scrollContainer === document.documentElement || scrollContainer === document.body) {
-            // If the scroll container is the document itself, use window offsets.
             y = rect.top + window.pageYOffset;
         } else {
-            // For a specific scrollable element, calculate position relative to its scroll area.
             const containerRect = scrollContainer.getBoundingClientRect();
             y = rect.top - containerRect.top + scrollContainer.scrollTop;
         }
@@ -134,11 +127,9 @@
         let y;
 
         if (scrollContainer === document.documentElement || scrollContainer === document.body) {
-            // If the scroll container is the document itself, use window offsets.
             y = rect.bottom + window.pageYOffset - window.innerHeight;
             scrollContainer.scrollTo({top: y});
         } else {
-            // For a specific scrollable element, calculate position relative to its scroll area.
             const containerRect = scrollContainer.getBoundingClientRect();
             y =
                 rect.bottom -
@@ -149,6 +140,7 @@
         }
         flashNode(node);
     }
+
     function ensureCodeId(node) {
         if (!node.hasAttribute(CODE_ATTR)) node.setAttribute(CODE_ATTR, crypto.randomUUID());
         return node.getAttribute(CODE_ATTR);
@@ -190,7 +182,6 @@
         const rect = node.getBoundingClientRect();
         let y;
 
-        // Scroll to the top of the code block, similar to scrollToNodeTop.
         if (scrollContainer === document.documentElement || scrollContainer === document.body) {
             y = rect.top + window.pageYOffset;
         } else {
@@ -210,12 +201,11 @@
         btn.id = SHOW_ID;
         btn.type = 'button';
         btn.textContent = 'Show Navigator';
-        btn.style.display = 'none'; // toggled via hide/show
+        btn.style.display = 'none';
 
         btn.addEventListener('click', () => {
             setHidden(false);
             showSidebar();
-            // Do not force a full rebuild; just ensure visibility is correct.
             renderAllFromCache();
         });
 
@@ -233,7 +223,9 @@
       <header>
         <div class="title">Navigator</div>
         <div class="controls">
-		  <button id="cgpt-nav-insert-prompt" title="Fetch http://localhost:8765/prompt and insert into chat input">✨</button>
+          <div id="cgpt-nav-prompt-picker" style="display:inline-block;">
+		    <button id="cgpt-nav-insert-prompt" title="Insert a prompt from http://localhost:8765">✨</button>
+          </div>
           <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
           <button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
           <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
@@ -255,22 +247,20 @@
             hideSidebar();
         });
 
-        // Refresh = full rescan + reconcile (still fast, but explicit)
         $('#cgpt-nav-refresh').addEventListener('click', () => fullRescanAndReconcile());
 
         ['#cgpt-nav-filter-user', '#cgpt-nav-filter-assistant'].forEach(sel => {
             $(sel).addEventListener('change', () => {
-                // Performance: do not rebuild; just toggle visibility.
                 applyFiltersToRenderedItems();
             });
         });
 
         $('#cgpt-nav-copy-thread').addEventListener('click', async () => {
-            const roleNodes = findRoleNodes(); // always copy full thread (user + assistant), regardless of filters
+            const roleNodes = findRoleNodes();
 
             const parts = [];
             for (const roleNode of roleNodes) {
-                const role = roleNode.getAttribute('data-message-author-role'); // user | assistant
+                const role = roleNode.getAttribute('data-message-author-role');
                 if (role !== 'user' && role !== 'assistant') continue;
 
                 const md = getMessageMarkdown(roleNode);
@@ -278,7 +268,7 @@
 
                 parts.push(role === 'user' ? '<|USER|>\n\n' : '<|ASSISTANT|>\n\n');
                 parts.push(md.trim());
-                parts.push('\n\n'); // separation between turns
+                parts.push('\n\n');
             }
 
             const payload = parts.join('').trim() + '\n';
@@ -292,29 +282,278 @@
             }
         });
 
-        $('#cgpt-nav-insert-prompt').addEventListener('click', async () => {
-            const btn = document.getElementById('cgpt-nav-insert-prompt');
-            const prev = btn?.textContent || 'Insert Prompt';
+        // ---------------- Prompt dropdown (PORTAL to body; avoids clipping) ----------------
+        let promptListCache = null; // string[] | null
+        let promptListCacheAt = 0;
+        const PROMPT_LIST_TTL_MS = 10_000;
+
+        const PROMPT_MENU_ID = 'cgpt-nav-prompt-menu';
+
+        function ensurePromptMenuPortal() {
+            let m = document.getElementById(PROMPT_MENU_ID);
+            if (m) return m;
+
+            m = document.createElement('div');
+            m.id = PROMPT_MENU_ID;
+            m.style.cssText = `
+                position: fixed;
+                z-index: 2147483647;
+                min-width: 260px;
+                max-width: 360px;
+                max-height: 320px;
+                overflow: auto;
+                display: none;
+                padding: 6px;
+                border-radius: 10px;
+                border: 1px solid rgba(255,255,255,0.14);
+                background: rgba(20,20,20,0.98);
+                box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+            `;
+            document.body.appendChild(m);
+            return m;
+        }
+
+        function menuEl() {
+            return ensurePromptMenuPortal();
+        }
+
+        function btnEl() {
+            return document.getElementById('cgpt-nav-insert-prompt');
+        }
+
+        function isMenuOpen() {
+            const m = menuEl();
+            return m.style.display !== 'none';
+        }
+
+        function closeMenu() {
+            const m = menuEl();
+            m.style.display = 'none';
+        }
+
+        function setMenuContent(html) {
+            const m = menuEl();
+            m.innerHTML = html;
+        }
+
+        function positionMenuToButton() {
+            const btn = btnEl();
+            const m = menuEl();
+            if (!btn || !m) return;
+
+            const r = btn.getBoundingClientRect();
+            const gap = 8;
+
+            // Temporarily show invisibly to measure
+            const prevDisplay = m.style.display;
+            const prevVis = m.style.visibility;
+            m.style.visibility = 'hidden';
+            m.style.display = 'block';
+
+            const menuW = m.offsetWidth || 300;
+            const menuH = m.offsetHeight || 200;
+
+            let left = r.right - menuW;
+            let top = r.bottom + gap;
+
+            left = Math.max(gap, Math.min(left, window.innerWidth - menuW - gap));
+
+            if (top + menuH + gap > window.innerHeight) {
+                top = r.top - menuH - gap;
+            }
+
+            top = Math.max(gap, Math.min(top, window.innerHeight - menuH - gap));
+
+            m.style.left = `${left}px`;
+            m.style.top = `${top}px`;
+
+            m.style.visibility = prevVis || '';
+            m.style.display = prevDisplay === 'none' ? 'block' : prevDisplay;
+        }
+
+        function openMenu() {
+            const m = menuEl();
+            m.style.display = 'block';
+            positionMenuToButton();
+        }
+
+        function renderPromptMenu(prompts) {
+            const m = menuEl();
+            if (!m) return;
+
+            if (!prompts || prompts.length === 0) {
+                setMenuContent(
+                    `<div style="padding:8px; opacity:0.8;">No .md prompts found.</div>`
+                );
+                positionMenuToButton();
+                return;
+            }
+
+            m.innerHTML = '';
+
+            const header = document.createElement('div');
+            header.textContent = 'Select a prompt';
+            header.style.cssText = 'padding:6px 8px; font-weight:600; opacity:0.9;';
+            m.appendChild(header);
+
+            const hr = document.createElement('div');
+            hr.style.cssText = 'height:1px; background: rgba(255,255,255,0.08); margin: 6px 0;';
+            m.appendChild(hr);
+
+            for (const filename of prompts) {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.textContent = filename;
+                item.title = `Insert ${filename}`;
+                item.style.cssText = `
+                    width: 100%;
+                    text-align: left;
+                    padding: 8px 10px;
+                    margin: 2px 0;
+                    border-radius: 8px;
+                    border: 1px solid rgba(255,255,255,0.08);
+                    background: rgba(255,255,255,0.04);
+                    cursor: pointer;
+                `;
+
+                item.addEventListener('mouseenter', () => {
+                    item.style.background = 'rgba(255,255,255,0.08)';
+                });
+                item.addEventListener('mouseleave', () => {
+                    item.style.background = 'rgba(255,255,255,0.04)';
+                });
+
+                item.addEventListener('click', async ev => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+
+                    const btn = btnEl();
+                    const prev = btn?.textContent || '✨';
+
+                    try {
+                        closeMenu();
+                        if (btn) btn.textContent = '…';
+
+                        const promptText = await fetchPromptByFilename(filename);
+
+                        const ok = setChatInputText(promptText);
+                        if (!ok) throw new Error('Could not find the chat input box');
+
+                        if (btn) btn.textContent = '✓';
+                        setTimeout(() => {
+                            const b = btnEl();
+                            if (b) b.textContent = prev;
+                        }, 800);
+                    } catch (e) {
+                        console.error('[cgpt-nav] Insert selected prompt failed:', e);
+                        if (btn) btn.textContent = '!';
+                        setTimeout(() => {
+                            const b = btnEl();
+                            if (b) b.textContent = prev;
+                        }, 1200);
+                    }
+                });
+
+                m.appendChild(item);
+            }
+
+            positionMenuToButton();
+        }
+
+        async function ensurePromptListLoaded(force = false) {
+            const now = Date.now();
+            const fresh = promptListCache && now - promptListCacheAt < PROMPT_LIST_TTL_MS;
+            if (!force && fresh) return promptListCache;
+
+            const prompts = await fetchPromptList();
+            prompts.sort((a, b) => a.localeCompare(b));
+            promptListCache = prompts;
+            promptListCacheAt = now;
+            return prompts;
+        }
+
+        // Close dropdown on outside click / ESC; reposition while open
+        document.addEventListener(
+            'click',
+            ev => {
+                if (!isMenuOpen()) return;
+
+                const btn = btnEl();
+                const m = menuEl();
+                const t = ev.target;
+
+                if (btn && btn.contains(t)) return;
+                if (m && m.contains(t)) return;
+
+                closeMenu();
+            },
+            true
+        );
+
+        window.addEventListener('keydown', ev => {
+            if (ev.key === 'Escape') closeMenu();
+        });
+
+        window.addEventListener('resize', () => {
+            if (isMenuOpen()) positionMenuToButton();
+        });
+
+        window.addEventListener(
+            'scroll',
+            () => {
+                if (isMenuOpen()) positionMenuToButton();
+            },
+            true
+        );
+
+        $('#cgpt-nav-insert-prompt').addEventListener('click', async ev => {
+            ev.preventDefault();
+            ev.stopPropagation();
+
+            if (isMenuOpen()) {
+                closeMenu();
+                return;
+            }
+
+            openMenu();
+            setMenuContent(`<div style="padding:8px; opacity:0.8;">Loading…</div>`);
+            positionMenuToButton();
 
             try {
-                if (btn) btn.textContent = 'Fetching…';
-                const promptText = await fetchLocalPrompt();
-
-                const ok = setChatInputText(promptText);
-                if (!ok) throw new Error('Could not find the chat input box');
-
-                if (btn) btn.textContent = 'Inserted';
-                setTimeout(() => {
-                    const b = document.getElementById('cgpt-nav-insert-prompt');
-                    if (b) b.textContent = prev;
-                }, 900);
+                const prompts = await ensurePromptListLoaded(false);
+                renderPromptMenu(prompts);
             } catch (e) {
-                if (btn) btn.textContent = 'Failed';
-                setTimeout(() => {
-                    const b = document.getElementById('cgpt-nav-insert-prompt');
-                    if (b) b.textContent = prev;
-                }, 1200);
-                console.error('[cgpt-nav] Insert Prompt failed:', e);
+                console.error('[cgpt-nav] Failed to load prompt list:', e);
+                setMenuContent(
+                    `<div style="padding:8px;">
+                        <div style="margin-bottom:8px; opacity:0.85;">Failed to load prompt list.</div>
+                        <button id="cgpt-nav-prompt-retry" type="button"
+                            style="padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); cursor:pointer;">
+                            Retry
+                        </button>
+                     </div>`
+                );
+                positionMenuToButton();
+
+                const retry = document.getElementById('cgpt-nav-prompt-retry');
+                if (retry) {
+                    retry.addEventListener('click', async ev2 => {
+                        ev2.preventDefault();
+                        ev2.stopPropagation();
+                        setMenuContent(`<div style="padding:8px; opacity:0.8;">Loading…</div>`);
+                        positionMenuToButton();
+                        try {
+                            const prompts = await ensurePromptListLoaded(true);
+                            renderPromptMenu(prompts);
+                        } catch (e2) {
+                            console.error('[cgpt-nav] Retry failed:', e2);
+                            setMenuContent(
+                                `<div style="padding:8px; opacity:0.8;">Still failing.</div>`
+                            );
+                            positionMenuToButton();
+                        }
+                    });
+                }
             }
         });
     }
@@ -346,11 +585,9 @@
     }
 
     function getPreviewText(roleNode) {
-        // Performance: prefer textContent (no forced layout) vs innerText.
         const t1 = clampText(roleNode.textContent);
         if (t1) return t1;
 
-        // Fallback (rare)
         const t2 = clampText(roleNode.innerText);
         if (t2) return t2;
 
@@ -513,9 +750,23 @@
         }
     }
 
-    function fetchLocalPrompt() {
+    // ---------- NEW: list + prompt fetch via background ----------
+    function fetchPromptList() {
         return new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage({type: 'cgpt-nav-fetch-prompt'}, resp => {
+            chrome.runtime.sendMessage({type: 'cgpt-nav-fetch-list'}, resp => {
+                const err = chrome.runtime.lastError;
+                if (err) return reject(new Error(err.message));
+
+                if (!resp?.ok)
+                    return reject(new Error(resp?.error || 'Failed to fetch prompt list'));
+                resolve(resp.prompts || []);
+            });
+        });
+    }
+
+    function fetchPromptByFilename(filename) {
+        return new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({type: 'cgpt-nav-fetch-prompt', filename}, resp => {
                 const err = chrome.runtime.lastError;
                 if (err) return reject(new Error(err.message));
 
@@ -523,6 +774,11 @@
                 resolve(resp.text || '');
             });
         });
+    }
+
+    // (kept for backward-compat; not used by the new dropdown)
+    function fetchLocalPrompt() {
+        return fetchPromptByFilename('default.md');
     }
 
     function findChatInput() {
@@ -553,18 +809,15 @@
     }
 
     function fallbackInsertAsParagraphs(el, text) {
-        // Fallback: build <p> lines so serializers keep line breaks better than <br>
         el.innerHTML = '';
         const lines = (text || '').split('\n');
 
         for (const line of lines) {
             const p = document.createElement('p');
-            // keep empty lines visible
             p.textContent = line === '' ? '\u00A0' : line;
             el.appendChild(p);
         }
 
-        // Nudge editor frameworks to reconcile state
         el.dispatchEvent(
             new InputEvent('input', {bubbles: true, inputType: 'insertFromPaste', data: text})
         );
@@ -583,18 +836,12 @@
         const input = findChatInput();
         if (!input) return false;
 
-        // Normalize newlines
         const t = (text ?? '').replace(/\r\n/g, '\n');
 
         if (input.kind === 'contenteditable') {
             const el = input.el;
             el.focus();
 
-            // Normalize newlines
-            const t = (text ?? '').replace(/\r\n/g, '\n');
-
-            // Clear existing content in a way editors tolerate
-            // (some editors react better if selection is inside)
             const sel = window.getSelection();
             if (sel && el.firstChild) {
                 const range = document.createRange();
@@ -604,11 +851,9 @@
                 sel.addRange(range);
             }
 
-            // Preferred: simulate a plain-text paste so ChatGPT updates its internal model
             const pasted = insertViaPaste(el, t);
 
             if (!pasted) {
-                // Fallback: paragraphs (better than <br> for many rich editors)
                 fallbackInsertAsParagraphs(el, t);
             }
 
@@ -619,7 +864,6 @@
     }
 
     // --- Performance-oriented rendering model ---------------------------------
-    // Cache entries by stable anchor id; render incrementally.
     const entryById = new Map(); // id -> { id, role, preview, anchor }
     const order = []; // ids in DOM order
     const domItemById = new Map(); // id -> element (sidebar item)
@@ -733,7 +977,6 @@
         const el = domItemById.get(entry.id);
         if (!el) return;
 
-        // Update role class/text only if needed.
         const roleEl = el.querySelector('.role');
         if (roleEl) {
             roleEl.className = `role ${entry.role}`;
@@ -745,14 +988,12 @@
             prevEl.textContent = entry.preview;
         }
 
-        // Reconcile code index row (assistant only)
         const existingRow = el.querySelector('.code-indexes');
         const wantCodes = entry.role === 'assistant' && entry.codeIds && entry.codeIds.length > 0;
 
         if (!wantCodes) {
             if (existingRow) existingRow.remove();
         } else {
-            // If row missing or count differs, rebuild (cheap).
             const existingBtns = existingRow ? existingRow.querySelectorAll('.code-btn') : null;
             const sameCount = existingBtns && existingBtns.length === entry.codeIds.length;
 
@@ -791,7 +1032,6 @@
     }
 
     function renumberIndices() {
-        // Cheap operation; only called on full rescan or when appending first time.
         for (let i = 0; i < order.length; i++) {
             const id = order[i];
             const el = domItemById.get(id);
@@ -817,13 +1057,12 @@
 
         const filters = getFilters();
 
-        // Preserve "pinned to bottom" behavior when new items are appended.
         const prevScrollTop = le.scrollTop;
         const prevScrollHeight = le.scrollHeight;
         const wasAtBottom = prevScrollHeight - (prevScrollTop + le.clientHeight) < 20;
 
         if (!domItemById.has(entry.id)) {
-            const idxNumber = order.indexOf(entry.id) + 1; // 1-based
+            const idxNumber = order.indexOf(entry.id) + 1;
             const itemEl = createItemElement(entry, idxNumber);
             itemEl.style.display = shouldShowRole(entry.role, filters) ? '' : 'none';
             le.appendChild(itemEl);
@@ -837,13 +1076,9 @@
         if (wasAtBottom) {
             le.scrollTop = le.scrollHeight;
         } else {
-            // Keep user's scroll position stable after append/update.
             const newScrollHeight = le.scrollHeight;
             const delta = newScrollHeight - prevScrollHeight;
-            // If we appended below the viewport, delta is likely small; adjust defensively.
             le.scrollTop = prevScrollTop;
-            // If you prefer a "relative position" preservation, use:
-            // le.scrollTop = prevScrollTop + Math.max(0, delta);
         }
     }
 
@@ -858,11 +1093,9 @@
         if (isHidden()) hideSidebar();
         else showSidebar();
 
-        // If nothing is rendered yet, do a one-time fast render without clearing repeatedly.
         if (domItemById.size === 0) {
             const filters = getFilters();
 
-            // Preserve scroll (mostly irrelevant when empty, but safe).
             const prevScrollTop = le.scrollTop;
             const prevScrollHeight = le.scrollHeight;
             const wasAtBottom = prevScrollHeight - (prevScrollTop + le.clientHeight) < 20;
@@ -884,7 +1117,6 @@
         }
     }
 
-    // Upsert from a roleNode; returns true if a new entry was created.
     function upsertFromRoleNode(roleNode) {
         const role = roleNode.getAttribute('data-message-author-role');
         if (role !== 'user' && role !== 'assistant') return false;
@@ -899,7 +1131,6 @@
 
         const existing = entryById.get(id);
         if (!existing) {
-            // Create new entry, including codeIds
             const entry = {id, role, preview, anchor, codeIds};
             entryById.set(id, entry);
             order.push(id);
@@ -907,7 +1138,6 @@
             renderEntryIfNeeded(entry);
             return true;
         } else {
-            // Update existing in-place (anchor might remain same; role/preview can change)
             let changed = false;
             if (existing.role !== role) {
                 existing.role = role;
@@ -921,7 +1151,6 @@
                 existing.anchor = anchor;
                 changed = true;
             }
-            // Compare and update codeIds for the existing entry
             const prevCode = existing.codeIds || [];
             const nextCode = codeIds || [];
             if (prevCode.length !== nextCode.length || prevCode.join(',') !== nextCode.join(',')) {
@@ -945,7 +1174,6 @@
         if (isHidden()) hideSidebar();
         else showSidebar();
 
-        // Build a fresh list of ids in DOM order
         const roleNodes = findRoleNodes();
         const freshIds = [];
         const freshById = new Map();
@@ -963,20 +1191,16 @@
             if (!freshById.has(id)) {
                 const codeIds = getCodeBlockIds(rn);
                 freshById.set(id, {id, role, preview, anchor, codeIds});
-
                 freshIds.push(id);
             }
         }
 
-        // Replace cache with fresh
         entryById.clear();
         for (const [id, entry] of freshById.entries()) entryById.set(id, entry);
 
         order.length = 0;
         order.push(...freshIds);
 
-        // Reconcile DOM with minimal churn:
-        // If the set changed materially, easiest is clear+re-render once (explicit refresh only).
         domItemById.clear();
         le.innerHTML = '';
         renderAllFromCache();
@@ -992,7 +1216,6 @@
         if (scheduled) return;
         scheduled = true;
 
-        // Use a short debounce; coalesce many mutations.
         setTimeout(() => {
             scheduled = false;
             processPending();
@@ -1008,13 +1231,9 @@
         const roots = Array.from(pendingRoots);
         pendingRoots.clear();
 
-        // Process each root: find newly-added role nodes within it and upsert.
-        // De-dup is handled by anchor id.
         for (const root of roots) {
             if (!root || root.nodeType !== Node.ELEMENT_NODE) continue;
 
-            // If a conversation turn is added, scanning that subtree is cheap and precise.
-            // Otherwise, scan subtree for role nodes.
             let roleNodes = [];
             if (root.matches && root.matches(ROLE_SEL)) {
                 roleNodes = [root];
@@ -1024,11 +1243,7 @@
             for (const rn of roleNodes) upsertFromRoleNode(rn);
         }
 
-        // Ensure indices remain correct when new entries append.
-        // Appends preserve ordering; indices only need update for the new tail, but renumber is cheap.
         renumberIndices();
-
-        // Apply current filters without rebuilding.
         applyFiltersToRenderedItems();
     }
 
@@ -1045,8 +1260,6 @@
                     if (!n) continue;
                     if (isInExtensionDom(n)) continue;
 
-                    // Only react to relevant additions: turns or role nodes (or anything containing them).
-                    // This avoids rebuild churn from unrelated UI updates.
                     if (n.nodeType === Node.ELEMENT_NODE) {
                         const el = n;
 
@@ -1059,7 +1272,6 @@
                             (el.querySelector && el.querySelector(ROLE_SEL));
 
                         if (isTurn || hasRole) {
-                            // Prefer processing the turn node if present (smaller scan).
                             if (isTurn && el.matches && el.matches(TURN_SEL)) {
                                 pendingRoots.add(el);
                             } else if (isTurn && el.querySelector) {
@@ -1084,11 +1296,9 @@
         ensureShowButton();
         createSidebar();
 
-        // Initial load: one full rescan (fast enough once), then incremental updates.
         fullRescanAndReconcile();
         startObserver();
 
-        // Optional hotkey: Ctrl+Shift+Y toggles sidebar
         window.addEventListener('keydown', e => {
             if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'y') {
                 const hidden = isHidden();
@@ -1102,11 +1312,8 @@
             }
         });
 
-        // Add a confirmation alert for page refresh/navigation
         window.addEventListener('beforeunload', function (e) {
-            // Cancel the event
             e.preventDefault();
-            // Chrome requires returnValue to be set
             e.returnValue = '';
         });
     }
