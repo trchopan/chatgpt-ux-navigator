@@ -1,37 +1,34 @@
 const SERVER = 'http://localhost:8765';
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  (async () => {
-    try {
-      if (msg?.type === 'cgpt-nav-fetch-list') {
-        const r = await fetch(`${SERVER}/list`, { cache: 'no-store' });
+const handlers = {
+    'cgpt-nav-fetch-list': async () => {
+        const r = await fetch(`${SERVER}/list`, {cache: 'no-store'});
         if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
         const data = await r.json();
-        sendResponse({ ok: true, prompts: data?.prompts || [] });
-        return;
-      }
+        return {ok: true, prompts: data?.prompts || []};
+    },
 
-      if (msg?.type === 'cgpt-nav-fetch-prompt') {
+    'cgpt-nav-fetch-prompt': async msg => {
         const filename = msg?.filename;
-        if (!filename || typeof filename !== 'string') {
-          throw new Error('Missing filename');
-        }
-        const url = `${SERVER}/prompt/${encodeURIComponent(filename)}`;
-        const r = await fetch(url, { cache: 'no-store' });
+        if (!filename || typeof filename !== 'string') throw new Error('Missing filename');
+        const r = await fetch(`${SERVER}/prompt/${encodeURIComponent(filename)}`, {
+            cache: 'no-store',
+        });
         if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
         const text = await r.text();
-        sendResponse({ ok: true, text });
-        return;
-      }
+        return {ok: true, text};
+    },
+};
 
-      // Unknown message
-      sendResponse({ ok: false, error: 'Unknown message type' });
-    } catch (e) {
-      sendResponse({ ok: false, error: String(e?.message || e) });
-    }
-  })();
-
-  // Required for async sendResponse
-  return true;
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    (async () => {
+        try {
+            const fn = handlers[msg?.type];
+            if (!fn) return sendResponse({ok: false, error: 'Unknown message type'});
+            sendResponse(await fn(msg));
+        } catch (e) {
+            sendResponse({ok: false, error: String(e?.message || e)});
+        }
+    })();
+    return true;
 });
-
