@@ -7,7 +7,11 @@
 
     async function fetchPromptList() {
         const resp = await messaging.sendMessage({type: C.MSG.FETCH_LIST});
-        if (!resp?.ok) throw new Error(resp?.error || 'Failed to fetch prompt list');
+        if (!resp?.ok) {
+            console.warn(resp?.error || 'Failed to fetch prompt list');
+            alert('Failed to fetch prompt list. Please try again.');
+            return [];
+        }
         return resp.prompts || [];
     }
 
