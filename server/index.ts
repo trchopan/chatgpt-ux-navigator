@@ -73,6 +73,23 @@ function parseThreadMessages(text: string): ThreadMessage[] {
     return messages;
 }
 
+async function appendAssistantResponse(filePath: string, response: string): Promise<void> {
+    let existing = '';
+
+    try {
+        existing = await Bun.file(filePath).text();
+    } catch {
+        // If file does not exist or is unreadable, treat as empty
+        existing = '';
+    }
+
+    const block = `\n\n# {{ASSISTANT}}\n\n` + response.replace(/\r\n/g, '\n').trimEnd() + '\n';
+
+    const next = existing.replace(/\s*$/, '') + block;
+
+    await Bun.write(filePath, next);
+}
+
 async function buildPrompt(filePath: string): Promise<string> {
     let md: string;
     try {
@@ -176,6 +193,34 @@ Bun.serve({
                         'Content-Type': 'application/json',
                         'Cache-Control': 'no-store',
                     },
+                });
+            }
+        }
+
+        if (req.method === 'POST' && url.pathname.startsWith('/prompt/')) {
+            const filename = url.pathname.replace('/prompt/', '');
+            const fullPath = join(PROMPTS_DIR, filename);
+
+            try {
+                const body = await req.json();
+
+                if (!body || typeof body.response !== 'string') {
+                    return new Response(JSON.stringify({error: 'Missing response'}), {
+                        status: 400,
+                        headers: {...corsHeaders, 'Content-Type': 'application/json'},
+                    });
+                }
+
+                await appendAssistantResponse(fullPath, body.response);
+
+                return new Response(JSON.stringify({ok: true}), {
+                    status: 200,
+                    headers: {...corsHeaders, 'Content-Type': 'application/json'},
+                });
+            } catch (e) {
+                return new Response(JSON.stringify({error: String(e?.toString?.() ?? e)}), {
+                    status: 500,
+                    headers: {...corsHeaders, 'Content-Type': 'application/json'},
                 });
             }
         }

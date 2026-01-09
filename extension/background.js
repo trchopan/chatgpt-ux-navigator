@@ -25,6 +25,22 @@ const handlers = {
 
         return {ok: true, threadMessages: data.threadMessages};
     },
+
+    'cgpt-nav-save-response': async msg => {
+        const {filename, response} = msg || {};
+        if (!filename || typeof response !== 'string') {
+            throw new Error('Missing filename or response');
+        }
+
+        const r = await fetch(`${SERVER}/prompt/${encodeURIComponent(filename)}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({response}),
+        });
+
+        if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+        return {ok: true};
+    },
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

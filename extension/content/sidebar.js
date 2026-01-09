@@ -6,6 +6,7 @@
     // --- DOM caches for sidebar rendering
     /** @type {Map<string, HTMLElement>} */
     const domItemById = new Map(); // id -> sidebar item element
+    let selectedFilename = null;
 
     function listEl() {
         return dom.$('#cgpt-nav-list');
@@ -61,27 +62,45 @@
         root.id = C.EXT_ID;
 
         root.innerHTML = `
-      <header>
-        <div class="title">Navigator</div>
-        <div class="controls">
-          <div id="cgpt-nav-prompt-picker" style="display:inline-block;">
-            <button id="cgpt-nav-insert-prompt" title="Insert a prompt from http://localhost:8765">✨</button>
-          </div>
-          <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
-          <button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
-          <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
-        </div>
-      </header>
+			<header>
+			  <div class="header-row">
+				<div class="title">Navigator</div>
+				<select id="cgpt-nav-file-select" title="Select prompt file"></select>
+			  </div>
 
-      <div class="filters">
-        <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
-        <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
-      </div>
+			  <div class="controls">
+				<button id="cgpt-nav-insert-prompt" title="Insert prompt">✨</button>
+				<button id="cgpt-nav-save-response" title="Save response">💾</button>
+				<button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
+				<button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
+				<button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
+			  </div>
+			</header>
 
-      <div class="list" id="cgpt-nav-list"></div>
-    `;
+			<div class="filters">
+			  <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
+			  <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
+			</div>
+
+			<div class="list" id="cgpt-nav-list"></div>
+		`;
 
         document.documentElement.appendChild(root);
+        const select = dom.$('#cgpt-nav-file-select');
+
+        prompts.ensurePromptListLoaded().then(files => {
+            select.innerHTML = `<option value="">Select file…</option>`;
+            for (const f of files) {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = f.length > 28 ? f.slice(0, 25) + '…' : f;
+                select.appendChild(opt);
+            }
+        });
+
+        select.addEventListener('change', () => {
+            selectedFilename = select.value || null;
+        });
 
         dom.$('#cgpt-nav-hide')?.addEventListener('click', () => {
             store.setHidden(true);
@@ -133,19 +152,19 @@
             m = document.createElement('div');
             m.id = C.PROMPT_MENU_ID;
             m.style.cssText = `
-        position: fixed;
-        z-index: 2147483647;
-        min-width: 260px;
-        max-width: 360px;
-        max-height: 320px;
-        overflow: auto;
-        display: none;
-        padding: 6px;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: rgba(20,20,20,0.98);
-        box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-      `;
+				position: fixed;
+				z-index: 2147483647;
+				min-width: 260px;
+				max-width: 360px;
+				max-height: 320px;
+				overflow: auto;
+				display: none;
+				padding: 6px;
+				border-radius: 10px;
+				border: 1px solid rgba(255,255,255,0.14);
+				background: rgba(20,20,20,0.98);
+				box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+			`;
             document.body.appendChild(m);
             return m;
         }
@@ -203,100 +222,6 @@
             m.style.display = prevDisplay === 'none' ? 'block' : prevDisplay;
         }
 
-        function openMenu() {
-            const m = menuEl();
-            m.style.display = 'block';
-            positionMenuToButton();
-        }
-
-        function renderPromptMenu(promptFilenames) {
-            const m = menuEl();
-            if (!m) return;
-
-            if (!promptFilenames || promptFilenames.length === 0) {
-                setMenuContent(
-                    `<div style="padding:8px; opacity:0.8;">No .md prompts found.</div>`
-                );
-                positionMenuToButton();
-                return;
-            }
-
-            m.innerHTML = '';
-
-            const header = document.createElement('div');
-            header.textContent = 'Select a prompt';
-            header.style.cssText = 'padding:6px 8px; font-weight:600; opacity:0.9;';
-            m.appendChild(header);
-
-            const hr = document.createElement('div');
-            hr.style.cssText = 'height:1px; background: rgba(255,255,255,0.08); margin: 6px 0;';
-            m.appendChild(hr);
-
-            for (const filename of promptFilenames) {
-                const item = document.createElement('button');
-                item.type = 'button';
-                item.textContent = filename;
-                item.title = `Insert ${filename}`;
-                item.style.cssText = `
-				  width: 100%;
-				  text-align: left;
-				  padding: 8px 10px;
-				  margin: 2px 0;
-				  border-radius: 8px;
-				  border: 1px solid rgba(255,255,255,0.08);
-				  background: rgba(255,255,255,0.04);
-				  cursor: pointer;
-				`;
-
-                item.addEventListener('mouseenter', () => {
-                    item.style.background = 'rgba(255,255,255,0.08)';
-                });
-                item.addEventListener('mouseleave', () => {
-                    item.style.background = 'rgba(255,255,255,0.04)';
-                });
-
-                item.addEventListener('click', async ev => {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-
-                    const btn = btnEl();
-                    const prev = btn?.textContent || '✨';
-
-                    try {
-                        closeMenu();
-                        if (btn) btn.textContent = '…';
-
-                        const threadMessages = await prompts.fetchThreadByFilename(filename);
-
-                        const latestUserMessage = getLatestUserMessage(threadMessages);
-                        if (!latestUserMessage) {
-                            throw new Error('No user message found in thread');
-                        }
-
-                        const ok = chatInput.setChatInputText(latestUserMessage);
-                        if (!ok) throw new Error('Could not find the chat input box');
-
-                        if (btn) btn.textContent = '✓';
-                        setTimeout(() => {
-                            const b = btnEl();
-                            if (b) b.textContent = prev;
-                        }, 800);
-                    } catch (e) {
-                        console.error('[cgpt-nav] Insert selected prompt failed:', e);
-                        if (btn) btn.textContent = '!';
-                        setTimeout(() => {
-                            const b = btnEl();
-                            if (b) b.textContent = prev;
-                        }, 1200);
-                    }
-                });
-
-                m.appendChild(item);
-            }
-
-            positionMenuToButton();
-        }
-
         // Close dropdown on outside click / ESC; reposition while open
         document.addEventListener(
             'click',
@@ -335,50 +260,48 @@
             ev.preventDefault();
             ev.stopPropagation();
 
-            if (isMenuOpen()) {
-                closeMenu();
+            if (!selectedFilename) {
+                alert('Select a file first');
                 return;
             }
 
-            openMenu();
-            setMenuContent(`<div style="padding:8px; opacity:0.8;">Loading…</div>`);
-            positionMenuToButton();
+            const threadMessages = await prompts.fetchThreadByFilename(selectedFilename);
 
-            try {
-                const list = await prompts.ensurePromptListLoaded(false);
-                renderPromptMenu(list);
-            } catch (e) {
-                console.error('[cgpt-nav] Failed to load prompt list:', e);
-                setMenuContent(
-                    `<div style="padding:8px;">
-            <div style="margin-bottom:8px; opacity:0.85;">Failed to load prompt list.</div>
-            <button id="cgpt-nav-prompt-retry" type="button"
-              style="padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); cursor:pointer;">
-              Retry
-            </button>
-           </div>`
-                );
-                positionMenuToButton();
+            const latestUserMessage = getLatestUserMessage(threadMessages);
 
-                const retry = document.getElementById('cgpt-nav-prompt-retry');
-                retry?.addEventListener('click', async ev2 => {
-                    ev2.preventDefault();
-                    ev2.stopPropagation(); // keep menu open
-                    setMenuContent(`<div style="padding:8px; opacity:0.8;">Loading…</div>`);
-                    positionMenuToButton();
-
-                    try {
-                        const list = await prompts.ensurePromptListLoaded(true);
-                        renderPromptMenu(list);
-                    } catch (e2) {
-                        console.error('[cgpt-nav] Retry failed:', e2);
-                        setMenuContent(
-                            `<div style="padding:8px; opacity:0.8;">Still failing.</div>`
-                        );
-                        positionMenuToButton();
-                    }
-                });
+            if (!latestUserMessage) {
+                throw new Error('No USER message found');
             }
+
+            chatInput.setChatInputText(latestUserMessage);
+        });
+
+        dom.$('#cgpt-nav-save-response')?.addEventListener('click', async () => {
+            if (!selectedFilename) {
+                alert('Select a file first');
+                return;
+            }
+
+            const roleNodes = dom.findRoleNodes();
+            let lastAssistant = null;
+
+            for (let i = roleNodes.length - 1; i >= 0; i--) {
+                const rn = roleNodes[i];
+                if (rn.getAttribute('data-message-author-role') === 'assistant') {
+                    lastAssistant = rn;
+                    break;
+                }
+            }
+
+            if (!lastAssistant) {
+                alert('No assistant response found');
+                return;
+            }
+
+            const md = markdown.getMessageMarkdown(lastAssistant);
+            await prompts.saveAssistantResponse(selectedFilename, md);
+
+            alert('Response saved');
         });
     }
 

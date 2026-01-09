@@ -27,6 +27,16 @@
         return resp.threadMessages || [];
     }
 
+    async function saveAssistantResponse(filename, response) {
+        const resp = await messaging.sendMessage({
+            type: C.MSG.SAVE_RESPONSE,
+            filename,
+            response,
+        });
+
+        if (!resp?.ok) throw new Error(resp?.error || 'Failed to save response');
+    }
+
     async function ensurePromptListLoaded(force = false) {
         const now = Date.now();
         const fresh = promptListCache && now - promptListCacheAt < C.PROMPT_LIST_TTL_MS;
@@ -42,5 +52,6 @@
     window.CGPT_NAV.prompts = {
         fetchThreadByFilename,
         ensurePromptListLoaded,
+        saveAssistantResponse,
     };
 })();

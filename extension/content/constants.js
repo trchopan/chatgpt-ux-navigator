@@ -17,6 +17,7 @@
         MSG: {
             FETCH_LIST: 'cgpt-nav-fetch-list',
             FETCH_PROMPT: 'cgpt-nav-fetch-prompt',
+            SAVE_RESPONSE: 'cgpt-nav-save-response',
         },
 
         PROMPT_LIST_TTL_MS: 10_000,
