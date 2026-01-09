@@ -11,10 +11,20 @@
         return resp.prompts || [];
     }
 
-    async function fetchPromptByFilename(filename) {
-        const resp = await messaging.sendMessage({type: C.MSG.FETCH_PROMPT, filename});
-        if (!resp?.ok) throw new Error(resp?.error || 'Failed to fetch prompt');
-        return resp.text || '';
+    /**
+     * Fetch a thread file and return structured messages.
+     * @param {string} filename
+     * @returns {{ role: 'user'|'assistant', content: string }[]}
+     */
+    async function fetchThreadByFilename(filename) {
+        const resp = await messaging.sendMessage({
+            type: C.MSG.FETCH_PROMPT,
+            filename,
+        });
+
+        if (!resp?.ok) throw new Error(resp?.error || 'Failed to fetch thread');
+
+        return resp.threadMessages || [];
     }
 
     async function ensurePromptListLoaded(force = false) {
@@ -30,7 +40,7 @@
     }
 
     window.CGPT_NAV.prompts = {
-        fetchPromptByFilename,
+        fetchThreadByFilename,
         ensurePromptListLoaded,
     };
 })();

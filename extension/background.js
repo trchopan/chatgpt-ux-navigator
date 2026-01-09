@@ -11,12 +11,19 @@ const handlers = {
     'cgpt-nav-fetch-prompt': async msg => {
         const filename = msg?.filename;
         if (!filename || typeof filename !== 'string') throw new Error('Missing filename');
+
         const r = await fetch(`${SERVER}/prompt/${encodeURIComponent(filename)}`, {
             cache: 'no-store',
         });
         if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
-        const text = await r.text();
-        return {ok: true, text};
+
+        const data = await r.json();
+
+        if (!data || !Array.isArray(data.threadMessages)) {
+            throw new Error('Invalid threadMessages payload');
+        }
+
+        return {ok: true, threadMessages: data.threadMessages};
     },
 };
 

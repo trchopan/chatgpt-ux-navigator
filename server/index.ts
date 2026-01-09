@@ -23,6 +23,56 @@ function isPathInsideRoot(absPath: string, absRoot: string): boolean {
     return path === normRoot.slice(0, -1) || path.startsWith(normRoot);
 }
 
+type ThreadMessage = {
+    role: 'user' | 'assistant';
+    content: string;
+};
+
+/**
+ * Parse a prompt file into structured thread messages.
+ * Expected format:
+ *
+ * # {{USER}}
+ *
+ * ...
+ *
+ * # {{ASSISTANT}}
+ *
+ * ...
+ */
+function parseThreadMessages(text: string): ThreadMessage[] {
+    const lines = text.replace(/\r\n/g, '\n').split('\n');
+
+    const messages: ThreadMessage[] = [];
+    let currentRole: ThreadMessage['role'] | null = null;
+    let buffer: string[] = [];
+
+    function flush() {
+        if (currentRole && buffer.length > 0) {
+            const content = buffer.join('\n').trim();
+            if (content) {
+                messages.push({role: currentRole, content});
+            }
+        }
+        buffer = [];
+    }
+
+    for (const line of lines) {
+        const headerMatch = line.match(/^#\s*\{\{(USER|ASSISTANT)\}\}\s*$/i);
+
+        if (headerMatch) {
+            flush();
+            currentRole = headerMatch[1]!.toLowerCase() as ThreadMessage['role'];
+            continue;
+        }
+
+        buffer.push(line);
+    }
+
+    flush();
+    return messages;
+}
+
 async function buildPrompt(filePath: string): Promise<string> {
     let md: string;
     try {
@@ -106,21 +156,24 @@ Bun.serve({
             const fullPath = join(PROMPTS_DIR, filename);
 
             try {
-                const prompt = await buildPrompt(fullPath);
-                return new Response(prompt, {
+                const processed = await buildPrompt(fullPath);
+
+                const threadMessages = parseThreadMessages(processed);
+
+                return new Response(JSON.stringify({threadMessages}), {
                     status: 200,
                     headers: {
                         ...corsHeaders,
-                        'Content-Type': 'text/plain; charset=utf-8',
+                        'Content-Type': 'application/json',
                         'Cache-Control': 'no-store',
                     },
                 });
             } catch (e) {
-                return new Response(String(e?.toString?.() ?? e), {
+                return new Response(JSON.stringify({error: String(e?.toString?.() ?? e)}), {
                     status: 500,
                     headers: {
                         ...corsHeaders,
-                        'Content-Type': 'text/plain; charset=utf-8',
+                        'Content-Type': 'application/json',
                         'Cache-Control': 'no-store',
                     },
                 });
