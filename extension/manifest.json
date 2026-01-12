@@ -3,7 +3,7 @@
     "name": "ChatGPT UX Navigator (User/System)",
     "version": "0.1.0",
     "description": "Sticky right sidebar to quickly navigate user and system messages in ChatGPT with 3-line previews.",
-    "permissions": [],
+    "permissions": ["storage"],
     "host_permissions": [
         "https://chatgpt.com/*",
         "https://chat.openai.com/*",
@@ -33,5 +33,9 @@
             "css": ["styles.css"],
             "run_at": "document_idle"
         }
-    ]
+    ],
+    "options_ui": {
+        "page": "options/options.html",
+        "open_in_tab": true
+    }
 }

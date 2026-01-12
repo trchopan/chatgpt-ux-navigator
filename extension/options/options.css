@@ -1,0 +1,77 @@
+:root {
+    color-scheme: light dark;
+    font-family:
+        system-ui,
+        -apple-system,
+        Segoe UI,
+        Roboto,
+        Arial,
+        sans-serif;
+}
+
+.wrap {
+    max-width: 720px;
+    margin: 24px auto;
+    padding: 0 16px;
+}
+
+h1 {
+    font-size: 18px;
+    margin: 0 0 12px;
+}
+
+.card {
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(127, 127, 127, 0.35);
+    background: transparent;
+}
+
+.hint {
+    margin: 10px 0 0;
+    opacity: 0.8;
+}
+
+.row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 14px;
+}
+
+.btn {
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(127, 127, 127, 0.35);
+    background: transparent;
+    cursor: pointer;
+}
+
+.btn.primary {
+    border-color: rgba(127, 127, 127, 0.6);
+    font-weight: 600;
+}
+
+.status {
+    margin-left: auto;
+    font-size: 13px;
+    opacity: 0.9;
+}
+
+.status[data-ok='0'] {
+    opacity: 1;
+}
