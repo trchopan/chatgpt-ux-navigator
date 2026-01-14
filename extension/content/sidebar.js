@@ -7,6 +7,7 @@
     /** @type {Map<string, HTMLElement>} */
     const domItemById = new Map(); // id -> sidebar item element
     let selectedFilename = null;
+    let activeId = null;
 
     function listEl() {
         return dom.$('#cgpt-nav-list');
@@ -319,6 +320,21 @@
         if (showBtn) showBtn.style.display = 'none';
     }
 
+    function setActiveId(id) {
+        if (!id || activeId === id) return;
+
+        // Remove previous
+        if (activeId) {
+            const prevEl = domItemById.get(activeId);
+            if (prevEl) prevEl.classList.remove('active');
+        }
+
+        activeId = id;
+
+        const el = domItemById.get(activeId);
+        if (el) el.classList.add('active');
+    }
+
     // --- Sidebar item construction
     /**
      * @param {{id:string, role:'user'|'assistant', preview:string, anchor:Element, codeIds?:string[]}} entry
@@ -589,6 +605,10 @@
         } else {
             applyFiltersToRenderedItems();
             renumberIndices();
+            if (activeId) {
+                const el = domItemById.get(activeId);
+                if (el) el.classList.add('active');
+            }
         }
     }
 
@@ -611,6 +631,11 @@
 
         renumberIndices();
         applyFiltersToRenderedItems();
+
+        if (activeId) {
+            const el = domItemById.get(activeId);
+            if (el) el.classList.add('active');
+        }
     }
 
     window.CGPT_NAV.sidebar = {
@@ -622,5 +647,6 @@
         renderFromModelIncremental,
         applyFiltersToRenderedItems,
         renumberIndices,
+        setActiveId,
     };
 })();

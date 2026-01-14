@@ -1,5 +1,5 @@
 (() => {
-    const {store, model, observer, sidebar} = window.CGPT_NAV;
+    const {store, model, observer, sidebar, activeSection} = window.CGPT_NAV;
 
     function init() {
         sidebar.ensureShowButton();
@@ -8,12 +8,14 @@
         // initial scan
         model.fullRescan();
         sidebar.renderAll(); // render from model state
+        if (activeSection?.start) activeSection.start();
         if (store.isHidden()) sidebar.hideSidebar();
         else sidebar.showSidebar();
 
         // observer updates
         observer.startObserver(() => {
-            sidebar.renderFromModelIncremental(); // you can implement as: render new/changed + renumber + filters
+            sidebar.renderFromModelIncremental();
+            if (activeSection?.recomputeActive) activeSection.recomputeActive();
         });
 
         // keyboard toggle

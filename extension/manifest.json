@@ -28,6 +28,7 @@
                 "content/model.js",
                 "content/sidebar.js",
                 "content/observer.js",
+                "content/activeSection.js",
                 "content/bootstrap.js"
             ],
             "css": ["styles.css"],
