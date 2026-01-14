@@ -260,3 +260,17 @@
 #cgpt-nav-show:hover {
     background: rgba(20, 20, 20, 0.94);
 }
+
+/* Selected code block */
+pre.cgpt-nav-selected-code {
+    outline: 2px solid rgba(255, 255, 255, 0.55) !important;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1) inset !important;
+    border-radius: 10px;
+}
+
+/* Selected code index button in Navigator */
+.cgpt-nav-item .code-btn.selected {
+    background: rgba(255, 255, 255, 0.38) !important;
+    border-color: rgba(255, 255, 255, 0.45) !important;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08) inset !important;
+}

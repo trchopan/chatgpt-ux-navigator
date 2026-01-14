@@ -1,4 +1,3 @@
-// extension/content/sidebar.js
 (() => {
     window.CGPT_NAV = window.CGPT_NAV || {};
     const {C, dom, store, model, scroll, prompts, clipboard, markdown, chatInput} = window.CGPT_NAV;
@@ -8,6 +7,23 @@
     const domItemById = new Map(); // id -> sidebar item element
     let selectedFilename = null;
     let activeId = null;
+
+    let selectedCodeId = null;
+
+    function applySelectedCodeHighlight() {
+        const root = document.getElementById(C.EXT_ID);
+        if (!root) return;
+
+        // Clear previous
+        root.querySelectorAll('.code-btn.selected').forEach(b => b.classList.remove('selected'));
+
+        if (!selectedCodeId) return;
+
+        // Highlight all matching buttons (should normally be just one)
+        root.querySelectorAll(`.code-btn[data-cgpt-nav-code-id="${selectedCodeId}"]`).forEach(b =>
+            b.classList.add('selected')
+        );
+    }
 
     function listEl() {
         return dom.$('#cgpt-nav-list');
@@ -188,11 +204,6 @@
             m.style.display = 'none';
         }
 
-        function setMenuContent(html) {
-            const m = menuEl();
-            m.innerHTML = html;
-        }
-
         function positionMenuToButton() {
             const btn = btnEl();
             const m = menuEl();
@@ -256,6 +267,12 @@
             },
             true
         );
+
+        // Sync selected code block highlight into Navigator buttons
+        window.addEventListener('cgpt-nav-code-selected', ev => {
+            selectedCodeId = ev?.detail?.codeId || null;
+            applySelectedCodeHighlight();
+        });
 
         dom.$('#cgpt-nav-insert-prompt')?.addEventListener('click', async ev => {
             ev.preventDefault();
@@ -410,10 +427,16 @@
                 b.className = 'code-btn';
                 b.textContent = `${i + 1}`;
                 b.title = `Go to code block ${i + 1}`;
+                b.dataset.cgptNavCodeId = codeId;
+                if (selectedCodeId && selectedCodeId === codeId) b.classList.add('selected');
                 b.addEventListener('click', ev => {
                     ev.preventDefault();
                     ev.stopPropagation();
-                    scroll.scrollToSelectorNearAnchor(entry.anchor, `[${C.CODE_ATTR}="${codeId}"]`);
+                    const node = scroll.scrollToSelectorNearAnchor(
+                        entry.anchor,
+                        `[${C.CODE_ATTR}="${codeId}"]`
+                    );
+                    if (node) scroll.setSelectedNode(node);
                 });
                 btns.appendChild(b);
             });
@@ -490,7 +513,11 @@
                 b.addEventListener('click', ev => {
                     ev.preventDefault();
                     ev.stopPropagation();
-                    scroll.scrollToSelectorNearAnchor(entry.anchor, `[${C.CODE_ATTR}="${codeId}"]`);
+                    const node = scroll.scrollToSelectorNearAnchor(
+                        entry.anchor,
+                        `[${C.CODE_ATTR}="${codeId}"]`
+                    );
+                    if (node) scroll.setSelectedNode(node);
                 });
                 btns.appendChild(b);
             });
@@ -610,6 +637,8 @@
                 if (el) el.classList.add('active');
             }
         }
+
+        applySelectedCodeHighlight();
     }
 
     /**
@@ -636,6 +665,8 @@
             const el = domItemById.get(activeId);
             if (el) el.classList.add('active');
         }
+
+        applySelectedCodeHighlight();
     }
 
     window.CGPT_NAV.sidebar = {

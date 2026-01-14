@@ -37,6 +37,32 @@
             e.preventDefault();
             e.returnValue = '';
         });
+
+        // Persistently highlight a code block when user clicks it in the page
+        document.addEventListener(
+            'click',
+            e => {
+                const t = e.target;
+                if (!(t instanceof Element)) return;
+                if (window.CGPT_NAV.dom?.isInExtensionDom(t)) return;
+
+                const pre = t.closest('pre');
+                if (!pre) return;
+
+                // Only treat it as a "navigator code block" if it has/gets the CODE_ATTR
+                if (
+                    window.CGPT_NAV.C?.CODE_ATTR &&
+                    !pre.hasAttribute(window.CGPT_NAV.C.CODE_ATTR)
+                ) {
+                    // assign an id so it participates consistently
+                    window.CGPT_NAV.dom?.ensureAttrId(pre, window.CGPT_NAV.C.CODE_ATTR);
+                }
+
+                // If it is a pre inside ChatGPT content, select/highlight it
+                window.CGPT_NAV.scroll?.selectCodeBlock(pre);
+            },
+            true
+        );
     }
 
     init();
