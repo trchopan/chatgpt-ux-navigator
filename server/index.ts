@@ -98,7 +98,8 @@ async function buildPrompt(filePath: string): Promise<string> {
         return `[ERROR: Unable to read prompt file: ${filePath}]`;
     }
 
-    const lines = md.split('\n');
+    let lines = md.split('\n');
+	lines = [...new Set(lines)].filter(Boolean);
     const processedLines: string[] = [];
 
     for (const line of lines) {
@@ -202,7 +203,7 @@ Bun.serve({
             const fullPath = join(PROMPTS_DIR, filename);
 
             try {
-                const body = await req.json();
+                const body: any = await req.json();
 
                 if (!body || typeof body.response !== 'string') {
                     return new Response(JSON.stringify({error: 'Missing response'}), {
