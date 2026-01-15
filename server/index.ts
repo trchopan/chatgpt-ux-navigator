@@ -1,5 +1,5 @@
-import {join, resolve, isAbsolute} from 'node:path';
-import {readdir} from 'node:fs/promises';
+import {join, resolve, isAbsolute, relative} from 'node:path';
+import {readdir, stat} from 'node:fs/promises';
 
 const PORT = 8765;
 
@@ -15,6 +15,16 @@ const PORT = 8765;
 const PROMPTS_DIR = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
 const FILES_ROOT = process.argv[3] ? resolve(process.argv[3]) : process.cwd();
 
+const SKIP_DIR_NAMES = new Set([
+    //
+    '.git',
+    'node_modules',
+    '.idea',
+    '.vscode',
+    'dist',
+    'build',
+]);
+
 function isPathInsideRoot(absPath: string, absRoot: string): boolean {
     // Ensure trailing separator for correct prefix matching (e.g. /root2 not matching /root)
     const root = absRoot.endsWith('/') || absRoot.endsWith('\\') ? absRoot : absRoot + '/';
@@ -26,6 +36,7 @@ function isPathInsideRoot(absPath: string, absRoot: string): boolean {
 type ThreadMessage = {
     role: 'user' | 'assistant';
     content: string;
+    hash: string;
 };
 
 /**
@@ -50,8 +61,9 @@ function parseThreadMessages(text: string): ThreadMessage[] {
     function flush() {
         if (currentRole && buffer.length > 0) {
             const content = buffer.join('\n').trim();
+            const hash = Bun.hash(content).toString();
             if (content) {
-                messages.push({role: currentRole, content});
+                messages.push({role: currentRole, content, hash});
             }
         }
         buffer = [];
@@ -90,6 +102,39 @@ async function appendAssistantResponse(filePath: string, response: string): Prom
     await Bun.write(filePath, next);
 }
 
+async function listPathsRecursive(absDir: string, baseDir: string = absDir): Promise<string[]> {
+    const out: string[] = [];
+
+    let names: string[];
+    try {
+        names = await readdir(absDir, {encoding: 'utf8'});
+    } catch {
+        return out;
+    }
+
+    names.sort((a, b) => a.localeCompare(b));
+
+    for (const name of names) {
+        const full = join(absDir, name);
+
+        let st;
+        try {
+            st = await stat(full);
+        } catch {
+            continue;
+        }
+
+        if (st.isDirectory()) {
+            if (SKIP_DIR_NAMES.has(name)) continue;
+            await listPathsRecursive(full, baseDir).then(r => out.push(...r));
+        } else if (st.isFile()) {
+            out.push(relative(baseDir, full));
+        }
+    }
+
+    return out;
+}
+
 async function buildPrompt(filePath: string): Promise<string> {
     let md: string;
     try {
@@ -98,41 +143,65 @@ async function buildPrompt(filePath: string): Promise<string> {
         return `[ERROR: Unable to read prompt file: ${filePath}]`;
     }
 
-    let lines = md.split('\n');
-	lines = [...new Set(lines)].filter(Boolean);
+    const lines = md.split('\n');
     const processedLines: string[] = [];
 
     for (const line of lines) {
         const match = line.match(/^\s*@(\S+)\s*$/);
 
-        if (match) {
-            const rawPath = match[1]!;
-            // Resolve @ inclusions against FILES_ROOT (unless absolute)
-            const absPath = isAbsolute(rawPath) ? rawPath : resolve(FILES_ROOT, rawPath);
+        if (!match) {
+            processedLines.push(line);
+            continue;
+        }
 
-            let content: string;
+        const rawPath = match[1]!;
+        const absPath = isAbsolute(rawPath) ? rawPath : resolve(FILES_ROOT, rawPath);
 
-            // Basic safety: do not allow escaping FILES_ROOT for relative includes
-            if (!isAbsolute(rawPath) && !isPathInsideRoot(absPath, FILES_ROOT)) {
-                content = `[ERROR: Path escapes FILES_ROOT: ${absPath}]`;
-            } else {
-                try {
-                    content = await Bun.file(absPath).text();
-                } catch (e) {
-                    console.error(`Error reading file ${absPath}:`, e);
-                    content = `[ERROR: Unable to read file: ${absPath}]`;
-                }
+        // Security: prevent escaping FILES_ROOT
+        if (!isAbsolute(rawPath) && !isPathInsideRoot(absPath, FILES_ROOT)) {
+            processedLines.push(`[ERROR: Path escapes FILES_ROOT: ${absPath}]`);
+            continue;
+        }
+
+        let st;
+        try {
+            st = await stat(absPath);
+        } catch {
+            processedLines.push(`[ERROR: Path does not exist: ${absPath}]`);
+            continue;
+        }
+
+        if (st.isDirectory()) {
+            // @dirpath → LIST PATHS ONLY
+            const paths = await listPathsRecursive(absPath);
+
+            processedLines.push('');
+            processedLines.push(`--- DIR ${absPath} (${paths.length} files) ---`);
+            processedLines.push('');
+
+            for (const p of paths) {
+                processedLines.push(p);
             }
 
             processedLines.push('');
-            processedLines.push(`--- ${absPath} ---`);
-            processedLines.push('');
-            processedLines.push(content.replace(/\r\n/g, '\n').trimEnd());
-            processedLines.push('');
-            processedLines.push(`--- END OF ${absPath} ---`);
-        } else {
-            processedLines.push(line);
+            processedLines.push(`--- END DIR ${absPath} ---`);
+            continue;
         }
+
+        // @filepath → EXISTING BEHAVIOR
+        let content: string;
+        try {
+            content = await Bun.file(absPath).text();
+        } catch {
+            content = `[ERROR: Unable to read file: ${absPath}]`;
+        }
+
+        processedLines.push('');
+        processedLines.push(`--- ${absPath} ---`);
+        processedLines.push('');
+        processedLines.push(content.replace(/\r\n/g, '\n').trimEnd());
+        processedLines.push('');
+        processedLines.push(`--- END OF ${absPath} ---`);
     }
 
     return processedLines.join('\n').trimEnd() + '\n';
@@ -175,7 +244,6 @@ Bun.serve({
 
             try {
                 const processed = await buildPrompt(fullPath);
-
                 const threadMessages = parseThreadMessages(processed);
 
                 return new Response(JSON.stringify({threadMessages}), {
