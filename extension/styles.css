@@ -88,12 +88,18 @@
 
 #cgpt-nav .filters {
     display: flex;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    align-items: center;
+    justify-content: space-between;
     gap: 8px;
     padding: 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-#cgpt-nav .filters label {
+#cgpt-nav .filters > .filters-checkboxes {
+    display: flex;
+}
+
+#cgpt-nav .filters > .filters-checkboxes label {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -273,4 +279,87 @@ pre.cgpt-nav-selected-code {
     background: rgba(255, 255, 255, 0.38) !important;
     border-color: rgba(255, 255, 255, 0.45) !important;
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08) inset !important;
+}
+
+/* Prompts section (between header and filters) */
+#cgpt-nav .prompts {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    display: flex;
+    flex-direction: column;
+}
+
+#cgpt-nav .prompts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+    user-select: none;
+}
+
+#cgpt-nav .prompts-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    opacity: 0.95;
+    cursor: pointer;
+}
+
+#cgpt-nav .prompts-title:hover {
+    opacity: 1;
+}
+
+#cgpt-nav .prompts-body {
+    display: none; /* collapsed by default */
+    padding: 0 10px 10px 10px;
+    max-height: 180px;
+    overflow: auto;
+    gap: 8px;
+}
+
+#cgpt-nav .prompts.open .prompts-body {
+    display: flex;
+    flex-direction: column;
+}
+
+#cgpt-nav .cgpt-nav-prompts-empty {
+    font-size: 12px;
+    opacity: 0.75;
+    padding: 6px 2px;
+}
+
+#cgpt-nav .cgpt-nav-prompt-item {
+    width: 100%;
+    text-align: left;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+#cgpt-nav .cgpt-nav-prompt-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+#cgpt-nav .cgpt-nav-prompt-idx {
+    font-size: 11px;
+    opacity: 0.75;
+    min-width: 30px;
+}
+
+#cgpt-nav .cgpt-nav-prompt-text {
+    font-size: 12.5px;
+    line-height: 1.25rem;
+    opacity: 0.95;
+
+    display: -webkit-box;
+    -webkit-line-clamp: 3; /* 3-line preview */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+
+    white-space: normal;
+    word-break: break-word;
 }

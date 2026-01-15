@@ -7,8 +7,117 @@
     const domItemById = new Map(); // id -> sidebar item element
     let selectedFilename = null;
     let activeId = null;
-
     let selectedCodeId = null;
+
+    // --- Prompt section state
+    let promptsOpen = true;
+    /** @type {{filename:string, at:number, threadMessages:{role:'user'|'assistant', content:string}[]} | null} */
+    let threadCache = null;
+
+    function promptsSectionEl() {
+        return document.getElementById('cgpt-nav-prompts');
+    }
+    function promptsBodyEl() {
+        return document.getElementById('cgpt-nav-prompts-body');
+    }
+    function promptsChevronEl() {
+        return document.getElementById('cgpt-nav-prompts-chevron');
+    }
+
+    function setPromptsOpen(next) {
+        promptsOpen = !!next;
+        const sec = promptsSectionEl();
+        const chev = promptsChevronEl();
+        if (sec) sec.classList.toggle('open', promptsOpen);
+        if (chev) chev.textContent = promptsOpen ? '▾' : '▸';
+    }
+
+    function clearThreadCache() {
+        threadCache = null;
+    }
+
+    function getUserMessages(threadMessages) {
+        return (threadMessages || []).filter(
+            m => m?.role === 'user' && typeof m.content === 'string'
+        );
+    }
+
+    /**
+     * Render the prompt USER messages into the prompt section body.
+     * @param {{role:'user'|'assistant', content:string}[]} threadMessages
+     */
+    function renderPromptMessages(threadMessages) {
+        const body = promptsBodyEl();
+        if (!body) return;
+
+        const userMsgs = getUserMessages(threadMessages);
+
+        if (!selectedFilename) {
+            body.innerHTML = `<div class="cgpt-nav-prompts-empty">Select a file to view prompts.</div>`;
+            return;
+        }
+
+        if (!userMsgs.length) {
+            body.innerHTML = `<div class="cgpt-nav-prompts-empty">No USER messages found in this file.</div>`;
+            return;
+        }
+
+        body.innerHTML = '';
+
+        userMsgs.forEach((m, idx) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'cgpt-nav-prompt-item';
+            btn.title = 'Insert this prompt into ChatGPT input';
+
+            const n = document.createElement('span');
+            n.className = 'cgpt-nav-prompt-idx';
+            n.textContent = `#${idx + 1}`;
+
+            const t = document.createElement('span');
+            t.className = 'cgpt-nav-prompt-text';
+            t.textContent = (m.content || '').trim();
+
+            btn.appendChild(n);
+            btn.appendChild(t);
+
+            btn.addEventListener('click', ev => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                chatInput.setChatInputText(m.content || '');
+            });
+
+            body.appendChild(btn);
+        });
+    }
+
+    /**
+     * Load thread messages for selectedFilename, with optional force refetch.
+     * @param {boolean} force
+     */
+    async function ensureThreadLoaded(force = false) {
+        const now = Date.now();
+
+        if (!selectedFilename) {
+            renderPromptMessages([]);
+            return;
+        }
+
+        const cacheOk =
+            !force &&
+            threadCache &&
+            threadCache.filename === selectedFilename &&
+            now - threadCache.at < C.PROMPT_LIST_TTL_MS; // reuse existing TTL constant
+
+        if (cacheOk) {
+            renderPromptMessages(threadCache.threadMessages);
+            return;
+        }
+
+        const threadMessages = await prompts.fetchThreadByFilename(selectedFilename);
+        threadCache = {filename: selectedFilename, at: now, threadMessages};
+        renderPromptMessages(threadMessages);
+    }
 
     function applySelectedCodeHighlight() {
         const root = document.getElementById(C.EXT_ID);
@@ -34,16 +143,6 @@
             user: dom.$('#cgpt-nav-filter-user')?.checked ?? true,
             assistant: dom.$('#cgpt-nav-filter-assistant')?.checked ?? true,
         };
-    }
-
-    function getLatestUserMessage(threadMessages) {
-        for (let i = threadMessages.length - 1; i >= 0; i--) {
-            const m = threadMessages[i];
-            if (m?.role === 'user' && typeof m.content === 'string') {
-                return m.content;
-            }
-        }
-        return '';
     }
 
     function shouldShowRole(role, filters) {
@@ -79,30 +178,59 @@
         root.id = C.EXT_ID;
 
         root.innerHTML = `
-			<header>
-			  <div class="header-row">
-				<div class="title">Navigator</div>
-				<select id="cgpt-nav-file-select" title="Select prompt file"></select>
-			  </div>
+<header>
+    <div class="header-row">
+        <div class="title">Navigator</div>
+        <select id="cgpt-nav-file-select" title="Select prompt file"></select>
+    </div>
 
-			  <div class="controls">
-				<button id="cgpt-nav-insert-prompt" title="Insert prompt">✨</button>
-				<button id="cgpt-nav-save-response" title="Save response">💾</button>
-				<button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
-				<button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
-				<button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
-			  </div>
-			</header>
+    <div class="controls">
+        <button id="cgpt-nav-save-response" title="Save response">💾</button>
+        <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
+        <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
+    </div>
+</header>
 
-			<div class="filters">
-			  <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
-			  <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
-			</div>
+<div class="prompts" id="cgpt-nav-prompts">
+    <div class="prompts-header">
+        <div class="prompts-title">
+            <span id="cgpt-nav-prompts-chevron">▸</span>
+            <span>Prompts</span>
+        </div>
+        <button id="cgpt-nav-prompts-refresh" title="Refetch prompt messages">🔄</button>
+    </div>
+    <div class="prompts-body" id="cgpt-nav-prompts-body"></div>
+</div>
 
-			<div class="list" id="cgpt-nav-list"></div>
+<div class="filters">
+	<div class="filters-checkboxes">
+		<label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
+		<label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
+	</div>
+	<button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
+</div>
+
+<div class="list" id="cgpt-nav-list"></div>
 		`;
 
+        root.querySelector('.prompts-title')?.addEventListener('click', async ev => {
+            ev.preventDefault();
+            ev.stopPropagation();
+
+            setPromptsOpen(!promptsOpen);
+
+            if (promptsOpen) {
+                if (!selectedFilename) {
+                    renderPromptMessages([]);
+                    return;
+                }
+                await ensureThreadLoaded(false);
+            }
+        });
+
         document.documentElement.appendChild(root);
+        setPromptsOpen(promptsOpen);
+
         const select = dom.$('#cgpt-nav-file-select');
 
         prompts.ensurePromptListLoaded().then(files => {
@@ -117,6 +245,14 @@
 
         select.addEventListener('change', () => {
             selectedFilename = select.value || null;
+            clearThreadCache();
+
+            if (!selectedFilename) {
+                renderPromptMessages([]);
+                return;
+            }
+
+            if (promptsOpen) ensureThreadLoaded(true);
         });
 
         dom.$('#cgpt-nav-hide')?.addEventListener('click', () => {
@@ -161,120 +297,14 @@
             }
         });
 
-        // ---------------- Prompt dropdown (PORTAL to body; avoids clipping) ----------------
-        function ensurePromptMenuPortal() {
-            let m = document.getElementById(C.PROMPT_MENU_ID);
-            if (m) return m;
-
-            m = document.createElement('div');
-            m.id = C.PROMPT_MENU_ID;
-            m.style.cssText = `
-				position: fixed;
-				z-index: 2147483647;
-				min-width: 260px;
-				max-width: 360px;
-				max-height: 320px;
-				overflow: auto;
-				display: none;
-				padding: 6px;
-				border-radius: 10px;
-				border: 1px solid rgba(255,255,255,0.14);
-				background: rgba(20,20,20,0.98);
-				box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-			`;
-            document.body.appendChild(m);
-            return m;
-        }
-
-        function menuEl() {
-            return ensurePromptMenuPortal();
-        }
-
-        function btnEl() {
-            return document.getElementById('cgpt-nav-insert-prompt');
-        }
-
-        function isMenuOpen() {
-            const m = menuEl();
-            return m.style.display !== 'none';
-        }
-
-        function closeMenu() {
-            const m = menuEl();
-            m.style.display = 'none';
-        }
-
-        function positionMenuToButton() {
-            const btn = btnEl();
-            const m = menuEl();
-            if (!btn || !m) return;
-
-            const r = btn.getBoundingClientRect();
-            const gap = 8;
-
-            const prevDisplay = m.style.display;
-            const prevVis = m.style.visibility;
-            m.style.visibility = 'hidden';
-            m.style.display = 'block';
-
-            const menuW = m.offsetWidth || 300;
-            const menuH = m.offsetHeight || 200;
-
-            let left = r.right - menuW;
-            let top = r.bottom + gap;
-
-            left = Math.max(gap, Math.min(left, window.innerWidth - menuW - gap));
-            if (top + menuH + gap > window.innerHeight) top = r.top - menuH - gap;
-            top = Math.max(gap, Math.min(top, window.innerHeight - menuH - gap));
-
-            m.style.left = `${left}px`;
-            m.style.top = `${top}px`;
-
-            m.style.visibility = prevVis || '';
-            m.style.display = prevDisplay === 'none' ? 'block' : prevDisplay;
-        }
-
-        // Close dropdown on outside click / ESC; reposition while open
-        document.addEventListener(
-            'click',
-            ev => {
-                if (!isMenuOpen()) return;
-
-                const btn = btnEl();
-                const m = menuEl();
-                const t = ev.target;
-
-                if (btn && t instanceof Node && btn.contains(t)) return;
-                if (m && t instanceof Node && m.contains(t)) return;
-
-                closeMenu();
-            },
-            true
-        );
-
-        window.addEventListener('keydown', ev => {
-            if (ev.key === 'Escape') closeMenu();
-        });
-
-        window.addEventListener('resize', () => {
-            if (isMenuOpen()) positionMenuToButton();
-        });
-
-        window.addEventListener(
-            'scroll',
-            () => {
-                if (isMenuOpen()) positionMenuToButton();
-            },
-            true
-        );
-
         // Sync selected code block highlight into Navigator buttons
         window.addEventListener('cgpt-nav-code-selected', ev => {
             selectedCodeId = ev?.detail?.codeId || null;
             applySelectedCodeHighlight();
         });
 
-        dom.$('#cgpt-nav-insert-prompt')?.addEventListener('click', async ev => {
+        // Refresh prompt messages (inside Prompts header)
+        dom.$('#cgpt-nav-prompts-refresh')?.addEventListener('click', async ev => {
             ev.preventDefault();
             ev.stopPropagation();
 
@@ -283,15 +313,7 @@
                 return;
             }
 
-            const threadMessages = await prompts.fetchThreadByFilename(selectedFilename);
-
-            const latestUserMessage = getLatestUserMessage(threadMessages);
-
-            if (!latestUserMessage) {
-                throw new Error('No USER message found');
-            }
-
-            chatInput.setChatInputText(latestUserMessage);
+            await ensureThreadLoaded(true);
         });
 
         dom.$('#cgpt-nav-save-response')?.addEventListener('click', async () => {
