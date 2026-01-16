@@ -181,13 +181,12 @@
 <header>
     <div class="header-row">
         <div class="title">Navigator</div>
-        <select id="cgpt-nav-file-select" title="Select prompt file"></select>
-    </div>
 
-    <div class="controls">
-        <button id="cgpt-nav-save-response" title="Save response">💾</button>
-        <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
-        <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
+        <div class="controls">
+            <button id="cgpt-nav-save-response" title="Save response">💾</button>
+            <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
+            <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
+        </div>
     </div>
 </header>
 
@@ -197,7 +196,11 @@
             <span id="cgpt-nav-prompts-chevron">▸</span>
             <span>Prompts</span>
         </div>
-        <button id="cgpt-nav-prompts-refresh" title="Refetch prompt messages">🔄</button>
+
+        <div class="prompts-right">
+            <select id="cgpt-nav-file-select" title="Select prompt file"></select>
+            <button id="cgpt-nav-prompts-refresh" title="Refetch prompt messages">🔄</button>
+        </div>
     </div>
     <div class="prompts-body" id="cgpt-nav-prompts-body"></div>
 </div>
@@ -212,6 +215,8 @@
 
 <div class="list" id="cgpt-nav-list"></div>
 		`;
+
+        document.documentElement.appendChild(root);
 
         root.querySelector('.prompts-title')?.addEventListener('click', async ev => {
             ev.preventDefault();
@@ -228,7 +233,10 @@
             }
         });
 
-        document.documentElement.appendChild(root);
+        root.querySelector('.prompts-right')?.addEventListener('click', ev => {
+            ev.stopPropagation();
+        });
+
         setPromptsOpen(promptsOpen);
 
         const select = dom.$('#cgpt-nav-file-select');
