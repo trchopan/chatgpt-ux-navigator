@@ -39,6 +39,12 @@ type ThreadMessage = {
     hash: string;
 };
 
+type TreeNode = {
+    name: string;
+    type: 'file' | 'directory';
+    children?: TreeNode[];
+};
+
 /**
  * Parse a prompt file into structured thread messages.
  * Expected format:
@@ -102,8 +108,8 @@ async function appendAssistantResponse(filePath: string, response: string): Prom
     await Bun.write(filePath, next);
 }
 
-async function listPathsRecursive(absDir: string, baseDir: string = absDir): Promise<string[]> {
-    const out: string[] = [];
+async function listPathsRecursive(absDir: string, baseDir: string = absDir): Promise<TreeNode[]> {
+    const out: TreeNode[] = [];
 
     let names: string[];
     try {
@@ -126,13 +132,28 @@ async function listPathsRecursive(absDir: string, baseDir: string = absDir): Pro
 
         if (st.isDirectory()) {
             if (SKIP_DIR_NAMES.has(name)) continue;
-            await listPathsRecursive(full, baseDir).then(r => out.push(...r));
+            const children = await listPathsRecursive(full, baseDir);
+            out.push({name, type: 'directory', children});
         } else if (st.isFile()) {
-            out.push(relative(baseDir, full));
+            out.push({name, type: 'file'});
         }
     }
 
     return out;
+}
+
+function formatTree(nodes: TreeNode[], indent: string = ''): string[] {
+    const lines: string[] = [];
+    nodes.forEach((node, i) => {
+        const isLast = i === nodes.length - 1;
+        const prefix = indent + (isLast ? '└── ' : '├── ');
+        lines.push(prefix + node.name);
+        if (node.type === 'directory' && node.children) {
+            const childIndent = indent + (isLast ? '    ' : '│   ');
+            lines.push(...formatTree(node.children, childIndent));
+        }
+    });
+    return lines;
 }
 
 async function buildPrompt(filePath: string): Promise<string> {
@@ -172,23 +193,21 @@ async function buildPrompt(filePath: string): Promise<string> {
         }
 
         if (st.isDirectory()) {
-            // @dirpath → LIST PATHS ONLY
-            const paths = await listPathsRecursive(absPath);
+            // @dirpath → List Paths only
+            const tree = await listPathsRecursive(absPath);
+            const formattedTree = formatTree(tree);
 
-            processedLines.push('');
-            processedLines.push(`--- DIR ${absPath} (${paths.length} files) ---`);
-            processedLines.push('');
+            processedLines.push(`\`\`\`\n${rawPath}`);
 
-            for (const p of paths) {
-                processedLines.push(p);
+            for (const line of formattedTree) {
+                processedLines.push(line);
             }
 
-            processedLines.push('');
-            processedLines.push(`--- END DIR ${absPath} ---`);
+            processedLines.push('```');
             continue;
         }
 
-        // @filepath → EXISTING BEHAVIOR
+        // @filepath → Read content
         let content: string;
         try {
             content = await Bun.file(absPath).text();
@@ -196,12 +215,12 @@ async function buildPrompt(filePath: string): Promise<string> {
             content = `[ERROR: Unable to read file: ${absPath}]`;
         }
 
+		processedLines.push(`**File:** ${rawPath}`);
         processedLines.push('');
-        processedLines.push(`--- ${absPath} ---`);
-        processedLines.push('');
+        processedLines.push('```');
         processedLines.push(content.replace(/\r\n/g, '\n').trimEnd());
+        processedLines.push('```');
         processedLines.push('');
-        processedLines.push(`--- END OF ${absPath} ---`);
     }
 
     return processedLines.join('\n').trimEnd() + '\n';
