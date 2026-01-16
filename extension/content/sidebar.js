@@ -289,7 +289,7 @@
                 const md = markdown.getMessageMarkdown(roleNode);
                 if (!md) continue;
 
-                parts.push(role === 'user' ? '<|USER|>\n\n' : '<|ASSISTANT|>\n\n');
+                parts.push(role === 'user' ? '# {{USER}}\n\n' : '# {{ASSISTANT}}\n\n');
                 parts.push(md.trim());
                 parts.push('\n\n');
             }

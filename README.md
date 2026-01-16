@@ -20,7 +20,7 @@ This project consists of two components:
 - **Code Block Navigation**: Assistant messages with code blocks get direct "jump buttons" in the sidebar (e.g., `Code: 1 2 3`) to scroll immediately to that specific snippet.
 - **Prompt Injection**: Select a local prompt file from the sidebar and insert its content into ChatGPT with one click.
 - **Save Responses**: Save the last Assistant response directly back to the local prompt file (appending it to the thread).
-- **Copy Thread**: One-click copy of the entire visible conversation as structured Markdown (`<|USER|>` / `<|ASSISTANT|>`).
+- **Copy Thread**: One-click copy of the entire visible conversation as structured Markdown (`# {{USER}}` / `# {{ASSISTANT}}`).
 - **Filters**: Toggle visibility of User or Assistant messages in the sidebar.
 
 ### Local Prompt Server
