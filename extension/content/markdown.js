@@ -2,8 +2,28 @@
     window.CGPT_NAV = window.CGPT_NAV || {};
     const {dom} = window.CGPT_NAV;
 
-    function escapeMdText(s) {
+    function normalizeNewlines(s) {
         return (s || '').replace(/\r\n/g, '\n');
+    }
+
+    function cleanupMd(md) {
+        return normalizeNewlines(md)
+            .replace(/[ \t]+\n/g, '\n') // trailing spaces
+            .replace(/\n{3,}/g, '\n\n') // collapse big gaps
+            .trim();
+    }
+
+    function getCodeFenceLang(codeEl) {
+        if (!codeEl) return '';
+        const cls = codeEl.className || '';
+        const m = cls.match(/language-([a-z0-9_-]+)/i);
+        return m ? m[1] : '';
+    }
+
+    function inlineCode(text) {
+        const t = text || '';
+        // If content includes backticks, wrap with double-backticks
+        return t.includes('`') ? `\`\`${t}\`\`` : `\`${t}\``;
     }
 
     /**
@@ -13,137 +33,133 @@
      * @returns {string}
      */
     function htmlToMarkdown(rootEl) {
-        function mdForNode(node, ctx) {
+        function childrenToMd(el, ctx) {
+            let out = '';
+            // @ts-ignore
+            for (const child of Array.from(el.childNodes || [])) {
+                out += toMd(child, ctx);
+            }
+            return out;
+        }
+
+        function toMd(node, ctx) {
             if (!node) return '';
 
             if (node.nodeType === Node.TEXT_NODE) {
-                // @ts-ignore - nodeValue exists for text nodes
-                return escapeMdText(node.nodeValue);
+                // @ts-ignore
+                return normalizeNewlines(node.nodeValue);
             }
 
             if (node.nodeType !== Node.ELEMENT_NODE) return '';
-            // @ts-ignore - tagName exists for Element nodes
-            const tag = node.tagName.toLowerCase();
 
+            /** @type {Element} */
             // @ts-ignore
-            const ariaHidden = node.getAttribute?.('aria-hidden');
+            const el = node;
+
+            const ariaHidden = el.getAttribute?.('aria-hidden');
             if (ariaHidden === 'true') return '';
 
+            const tag = (el.tagName || '').toLowerCase();
+
+            // --- Code blocks
             if (tag === 'pre') {
-                // @ts-ignore
-                const codeEl = node.querySelector?.('code');
-                // @ts-ignore
-                const codeText = codeEl ? codeEl.textContent : node.textContent;
+                const codeEl = el.querySelector?.('code');
+                const codeText = codeEl ? codeEl.textContent : el.textContent;
+                const lang = getCodeFenceLang(codeEl);
 
-                let lang = '';
-                if (codeEl) {
-                    const cls = codeEl.className || '';
-                    const m = cls.match(/language-([a-z0-9_-]+)/i);
-                    if (m) lang = m[1];
-                }
-                return `\n\`\`\`${lang}\n${(codeText || '').replace(/\n$/, '')}\n\`\`\`\n`;
+                const body = normalizeNewlines(codeText || '').replace(/\n$/, '');
+                return `\n\`\`\`${lang}\n${body}\n\`\`\`\n`;
             }
 
+            // Inline code
             if (tag === 'code') {
-                // @ts-ignore
-                if (node.closest?.('pre')) return '';
-                // @ts-ignore
-                const t = node.textContent || '';
-                const needsDouble = t.includes('`');
-                return needsDouble ? `\`\`${t}\`\`` : `\`${t}\``;
+                if (el.closest?.('pre')) return '';
+                return inlineCode(el.textContent || '');
             }
 
+            // Links
             if (tag === 'a') {
-                // @ts-ignore
-                const text = (node.textContent || '').trim() || 'link';
-                // @ts-ignore
-                const href = node.getAttribute?.('href') || '';
-                if (!href) return text;
-                return `[${text}](${href})`;
+                const text = (el.textContent || '').trim() || 'link';
+                const href = el.getAttribute?.('href') || '';
+                return href ? `[${text}](${href})` : text;
             }
 
+            // Emphasis
             if (tag === 'strong' || tag === 'b') {
-                // @ts-ignore
-                return `**${childrenToMd(node, ctx).trim()}**`;
+                const inner = childrenToMd(el, ctx).trim();
+                return inner ? `**${inner}**` : '';
             }
             if (tag === 'em' || tag === 'i') {
-                // @ts-ignore
-                return `*${childrenToMd(node, ctx).trim()}*`;
+                const inner = childrenToMd(el, ctx).trim();
+                return inner ? `*${inner}*` : '';
             }
 
+            // Headings
             if (/^h[1-6]$/.test(tag)) {
                 const level = Number(tag.slice(1));
-                // @ts-ignore
-                const text = childrenToMd(node, ctx).trim();
+                const text = childrenToMd(el, ctx).trim();
+                if (!text) return '';
                 return `\n${'#'.repeat(level)} ${text}\n\n`;
             }
 
+            // Blockquote
             if (tag === 'blockquote') {
-                // @ts-ignore
-                const text = childrenToMd(node, ctx)
-                    .trim()
+                const text = childrenToMd(el, ctx).trim();
+                if (!text) return '';
+                const q = text
                     .split('\n')
                     .map(l => `> ${l}`)
                     .join('\n');
-                return `\n${text}\n\n`;
+                return `\n${q}\n\n`;
             }
 
+            // Lists
             if (tag === 'ul' || tag === 'ol') {
                 const isOl = tag === 'ol';
-                let idx = 1;
                 const parts = [];
-                // @ts-ignore
-                for (const li of Array.from(node.children || [])) {
-                    if (li.tagName && li.tagName.toLowerCase() === 'li') {
-                        const bullet = isOl ? `${idx}. ` : `- `;
-                        // @ts-ignore
-                        const inner = childrenToMd(li, {
-                            ...ctx,
-                            listDepth: ctx.listDepth + 1,
-                            olIndex: idx,
-                        }).trim();
+                let idx = 1;
 
-                        const indent = '  '.repeat(ctx.listDepth);
-                        const lines = inner.split('\n');
-                        const first = `${indent}${bullet}${lines[0] || ''}`;
-                        const rest = lines.slice(1).map(l => `${indent}  ${l}`);
-                        parts.push([first, ...rest].join('\n'));
-                        idx += 1;
-                    }
+                // @ts-ignore
+                for (const li of Array.from(el.children || [])) {
+                    if (!li?.tagName || li.tagName.toLowerCase() !== 'li') continue;
+
+                    const bullet = isOl ? `${idx}. ` : `- `;
+                    const inner = childrenToMd(li, {
+                        ...ctx,
+                        listDepth: (ctx.listDepth || 0) + 1,
+                        olIndex: idx,
+                    }).trim();
+
+                    const indent = '  '.repeat(ctx.listDepth || 0);
+                    const lines = (inner || '').split('\n');
+                    const first = `${indent}${bullet}${lines[0] || ''}`;
+                    const rest = lines.slice(1).map(l => `${indent}  ${l}`);
+                    parts.push([first, ...rest].join('\n'));
+
+                    idx += 1;
                 }
+
+                if (!parts.length) return '';
                 return `\n${parts.join('\n')}\n\n`;
             }
 
+            // Paragraph
             if (tag === 'p') {
-                // @ts-ignore
-                const text = childrenToMd(node, ctx).trim();
+                const text = childrenToMd(el, ctx).trim();
                 if (!text) return '';
                 return `\n${text}\n\n`;
             }
 
+            // Line breaks + rules
             if (tag === 'br') return '\n';
             if (tag === 'hr') return '\n---\n';
 
-            // Default: recurse.
-            // @ts-ignore
-            return childrenToMd(node, ctx);
+            // Default: recurse into children
+            return childrenToMd(el, ctx);
         }
 
-        function childrenToMd(el, ctx) {
-            let s = '';
-            // @ts-ignore
-            for (const child of Array.from(el.childNodes || [])) {
-                s += mdForNode(child, ctx);
-            }
-            return s;
-        }
-
-        const md = mdForNode(rootEl, {listDepth: 0, olIndex: 1});
-
-        return md
-            .replace(/[ \t]+\n/g, '\n')
-            .replace(/\n{3,}/g, '\n\n')
-            .trim();
+        const md = toMd(rootEl, {listDepth: 0, olIndex: 1});
+        return cleanupMd(md);
     }
 
     /**

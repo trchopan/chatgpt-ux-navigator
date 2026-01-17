@@ -1,18 +1,47 @@
+// extension/content/activeSection.js
 (() => {
     window.CGPT_NAV = window.CGPT_NAV || {};
     const {model, sidebar} = window.CGPT_NAV;
 
     let rafScheduled = false;
 
-    // Roughly where the "content top" begins in viewport coordinates.
-    // Tune if needed (ChatGPT header varies).
-    const VIEWPORT_TOP_OFFSET = 84;
+    // Fallback if we can't reliably detect header height
+    const FALLBACK_VIEWPORT_TOP_OFFSET = 84;
 
+    /**
+     * Best-effort attempt to compute the “content top” offset.
+     * ChatGPT header varies; we try to infer a reasonable value and fallback.
+     * @returns {number}
+     */
+    function getViewportTopOffset() {
+        // Common-ish header patterns on ChatGPT; keep conservative and fail-safe.
+        const header =
+            document.querySelector('header') ||
+            document.querySelector('[role="banner"]') ||
+            document.querySelector('[data-testid="app-header"]');
+
+        if (header instanceof Element) {
+            const r = header.getBoundingClientRect();
+            // If header is at top and has a reasonable height, use it + small gap.
+            if (r.top <= 0 && r.height > 20 && r.height < 200) {
+                return Math.round(r.height + 12);
+            }
+        }
+
+        return FALLBACK_VIEWPORT_TOP_OFFSET;
+    }
+
+    /**
+     * Pick the "active" message id based on anchor position in viewport.
+     * @returns {string|null}
+     */
     function pickActiveId() {
+        if (!model?.getState) return null;
+
         const {entryById, order} = model.getState();
         if (!order || order.length === 0) return null;
 
-        const offset = VIEWPORT_TOP_OFFSET;
+        const offset = getViewportTopOffset();
 
         let bestId = null;
         let bestScore = Number.POSITIVE_INFINITY;
@@ -44,13 +73,12 @@
     }
 
     function recomputeActiveNow() {
+        if (!sidebar?.setActiveId) return;
         const id = pickActiveId();
         if (id) sidebar.setActiveId(id);
     }
 
     function scheduleRecompute() {
-        console.log('[cgpt-nav] scroll captured');
-
         if (rafScheduled) return;
         rafScheduled = true;
 

@@ -3,49 +3,41 @@
     const {C} = window.CGPT_NAV;
 
     const SELECTED_CODE_CLASS = 'cgpt-nav-selected-code';
+
     /** @type {Element|null} */
     let selectedNode = null;
 
+    // ----------------------------
+    // Scroll container utilities
+    // ----------------------------
+    function isScrollable(el) {
+        if (!el) return false;
+        const style = getComputedStyle(el);
+        const overflowY = style.overflowY || style.overflow;
+        const scrollable = overflowY === 'auto' || overflowY === 'scroll';
+        return scrollable && el.scrollHeight > el.clientHeight;
+    }
+
+    /**
+     * Find nearest scrollable container for a node; fallback to documentElement/body.
+     * @param {Element|null} node
+     * @returns {Element}
+     */
     function getScrollContainer(node) {
         if (!node) return document.documentElement;
 
-        let current = node.parentNode;
+        let current = node.parentElement;
         while (current && current !== document.body && current !== document.documentElement) {
-            const style = getComputedStyle(current);
-            const scrollable =
-                style.overflowY === 'auto' ||
-                style.overflowY === 'scroll' ||
-                style.overflow === 'auto' ||
-                style.overflow === 'scroll';
-
-            if (scrollable && current.scrollHeight > current.clientHeight) return current;
-            current = current.parentNode;
+            if (isScrollable(current)) return current;
+            current = current.parentElement;
         }
 
         // fallback to doc/body when they are scrollable
         const de = document.documentElement;
         const bo = document.body;
 
-        const deStyle = getComputedStyle(de);
-        const boStyle = getComputedStyle(bo);
-
-        const deScrollable =
-            (deStyle.overflowY === 'auto' ||
-                deStyle.overflowY === 'scroll' ||
-                deStyle.overflow === 'auto' ||
-                deStyle.overflow === 'scroll') &&
-            de.scrollHeight > de.clientHeight;
-
-        if (deScrollable) return de;
-
-        const boScrollable =
-            (boStyle.overflowY === 'auto' ||
-                boStyle.overflowY === 'scroll' ||
-                boStyle.overflow === 'auto' ||
-                boStyle.overflow === 'scroll') &&
-            bo.scrollHeight > bo.clientHeight;
-
-        if (boScrollable) return bo;
+        if (isScrollable(de)) return de;
+        if (isScrollable(bo)) return bo;
 
         return de;
     }
@@ -54,6 +46,21 @@
         const prevOutline = node.style.outline;
         node.style.outline = '2px solid rgba(255, 255, 255, 0.45)';
         setTimeout(() => (node.style.outline = prevOutline), 900);
+    }
+
+    // ----------------------------
+    // Selection/highlight
+    // ----------------------------
+    function dispatchSelectedCodeId(codeId) {
+        try {
+            window.dispatchEvent(
+                new CustomEvent('cgpt-nav-code-selected', {
+                    detail: {codeId: codeId || null},
+                })
+            );
+        } catch (_) {
+            // ignore
+        }
     }
 
     /**
@@ -75,68 +82,106 @@
         selectedNode = node;
         selectedNode.classList.add(SELECTED_CODE_CLASS);
 
-        // Notify sidebar (and any other listeners) which code block is selected
-        try {
-            const codeId = C?.CODE_ATTR ? selectedNode.getAttribute(C.CODE_ATTR) : null;
-            window.dispatchEvent(
-                new CustomEvent('cgpt-nav-code-selected', {
-                    detail: {codeId: codeId || null},
-                })
-            );
-        } catch (_) {
-            // ignore
-        }
+        const codeId = C?.CODE_ATTR ? selectedNode.getAttribute(C.CODE_ATTR) : null;
+        dispatchSelectedCodeId(codeId);
     }
 
     function clearSelectedNode() {
         if (selectedNode) selectedNode.classList.remove(SELECTED_CODE_CLASS);
         selectedNode = null;
+        dispatchSelectedCodeId(null);
+    }
 
+    /**
+     * Ensure node has CODE_ATTR (for consistent sidebar linkage)
+     * @param {Element} preEl
+     */
+    function ensureCodeAttr(preEl) {
+        if (!C?.CODE_ATTR) return;
+        if (preEl.hasAttribute(C.CODE_ATTR)) return;
         try {
-            window.dispatchEvent(
-                new CustomEvent('cgpt-nav-code-selected', {
-                    detail: {codeId: null},
-                })
-            );
+            preEl.setAttribute(C.CODE_ATTR, crypto.randomUUID());
         } catch (_) {
             // ignore
         }
     }
 
-    function scrollToNodeTop(node) {
-        const scrollContainer = getScrollContainer(node);
-        const rect = node.getBoundingClientRect();
-        let y;
+    /**
+     * Convenience: select a code block by element, ensuring it gets selection highlight.
+     * @param {Element} preEl
+     */
+    function selectCodeBlock(preEl) {
+        if (!preEl || !(preEl instanceof Element)) return;
+        if (preEl.matches && preEl.matches('pre')) {
+            ensureCodeAttr(preEl);
+            setSelectedNode(preEl);
+        }
+    }
 
-        if (scrollContainer === document.documentElement || scrollContainer === document.body) {
-            y = rect.top + window.pageYOffset;
+    // ----------------------------
+    // Scrolling helpers
+    // ----------------------------
+    function getContainerScrollTop(container) {
+        if (container === document.documentElement || container === document.body) {
+            return window.pageYOffset;
+        }
+        return container.scrollTop;
+    }
+
+    function scrollContainerTo(container, top) {
+        if (container === document.documentElement || container === document.body) {
+            window.scrollTo({top});
         } else {
-            const containerRect = scrollContainer.getBoundingClientRect();
-            y = rect.top - containerRect.top + scrollContainer.scrollTop;
+            container.scrollTo({top});
+        }
+    }
+
+    /**
+     * Scroll node into view with a predictable alignment against its scroll container.
+     * @param {Element} node
+     * @param {{align: 'top' | 'bottom'}} opts
+     */
+    function scrollToNode(node, opts) {
+        const align = opts?.align || 'top';
+        const container = getScrollContainer(node);
+
+        const nodeRect = node.getBoundingClientRect();
+
+        // If scrolling inside a container, convert node's client rect to container scroll coords.
+        if (container !== document.documentElement && container !== document.body) {
+            const containerRect = container.getBoundingClientRect();
+            const currentTop = getContainerScrollTop(container);
+
+            let targetTop = nodeRect.top - containerRect.top + currentTop; // top align baseline
+
+            if (align === 'bottom') {
+                targetTop =
+                    nodeRect.bottom - containerRect.top + currentTop - container.clientHeight;
+            }
+
+            scrollContainerTo(container, targetTop);
+            return;
         }
 
-        scrollContainer.scrollTo({top: y});
+        // Page scrolling
+        let targetTop = nodeRect.top + window.pageYOffset;
+
+        if (align === 'bottom') {
+            targetTop = nodeRect.bottom + window.pageYOffset - window.innerHeight;
+        }
+
+        scrollContainerTo(container, targetTop);
+    }
+
+    function scrollToNodeTop(node) {
+        if (!node) return;
+        scrollToNode(node, {align: 'top'});
         flashNode(node);
     }
 
     function scrollToNodeBottom(node) {
-        const scrollContainer = getScrollContainer(node);
-        const rect = node.getBoundingClientRect();
-        let y;
-
-        if (scrollContainer === document.documentElement || scrollContainer === document.body) {
-            y = rect.bottom + window.pageYOffset - window.innerHeight;
-            scrollContainer.scrollTo({top: y});
-        } else {
-            const containerRect = scrollContainer.getBoundingClientRect();
-            y =
-                rect.bottom -
-                containerRect.top +
-                scrollContainer.scrollTop -
-                scrollContainer.clientHeight;
-            scrollContainer.scrollTo({top: y});
-        }
-
+        if (!node) return;
+        scrollToNode(node, {align: 'bottom'});
         flashNode(node);
     }
 
@@ -154,47 +199,17 @@
         const node =
             (anchor.querySelector && anchor.querySelector(selector)) ||
             document.querySelector(selector);
+
         if (!node) return null;
 
-        const scrollContainer = getScrollContainer(node);
-        const rect = node.getBoundingClientRect();
-        let y;
-
-        if (scrollContainer === document.documentElement || scrollContainer === document.body) {
-            y = rect.top + window.pageYOffset;
-        } else {
-            const containerRect = scrollContainer.getBoundingClientRect();
-            y = rect.top - containerRect.top + scrollContainer.scrollTop;
-        }
-
-        scrollContainer.scrollTo({top: y});
+        scrollToNode(node, {align: 'top'});
         flashNode(node);
 
-        // If it's a code block <pre>, persist highlight as selection
         if (node.matches && node.matches('pre')) {
-            setSelectedNode(node);
+            selectCodeBlock(node);
         }
 
         return node;
-    }
-
-    /**
-     * Convenience: select a code block by id attr (or element), ensuring it gets the selection highlight.
-     * @param {Element} preEl
-     */
-    function selectCodeBlock(preEl) {
-        if (!preEl || !(preEl instanceof Element)) return;
-        if (preEl.matches && preEl.matches('pre')) {
-            // Ensure it has the code attr so it’s consistent with sidebar navigation
-            if (C?.CODE_ATTR && !preEl.hasAttribute(C.CODE_ATTR)) {
-                try {
-                    preEl.setAttribute(C.CODE_ATTR, crypto.randomUUID());
-                } catch (_) {
-                    // ignore
-                }
-            }
-            setSelectedNode(preEl);
-        }
     }
 
     window.CGPT_NAV.scroll = {
