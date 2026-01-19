@@ -1,4 +1,3 @@
-// extension/content/chatInput.js
 (() => {
     window.CGPT_NAV = window.CGPT_NAV || {};
 

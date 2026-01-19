@@ -1,4 +1,3 @@
-// extension/content/activeSection.js
 (() => {
     window.CGPT_NAV = window.CGPT_NAV || {};
     const {model, sidebar} = window.CGPT_NAV;
