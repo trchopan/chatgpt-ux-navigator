@@ -26,9 +26,12 @@ This project consists of two components:
 ### Local Prompt Server
 
 - **Markdown-based Prompts**: Write prompts in your favorite local editor.
-- **File Inclusion**: dynamically include other local files in your prompt using `@filepath` syntax.
-    - Example: `@./src/index.ts` will inject the content of that file into the prompt.
-    - Supports recursive inclusion and directory listing.
+- **File Inclusion**: dynamically include local files or directories in your prompt using `@path` syntax.
+    - **Single file**: `@./src/index.ts` injects the full contents of that file.
+    - **Directory tree**: `@./src` injects a formatted directory tree (recursive, no file contents).
+    - **Directory content concat**: `@@./src` injects the contents of **all files in that directory (first level only)**, concatenated in the same format as single-file inclusion.
+    - Paths are resolved relative to the configured files root and cannot escape it.
+- **Advanced Directory Includes**: Use `@dir` for structure, or `@@dir` to inline all files in that directory (non-recursive).
 - **Thread History**: Supports "chat mode" in Markdown files using `# {{USER}}` and `# {{ASSISTANT}}` headers to preserve context.
 - **Privacy-First**: Your files stay on your machine. The extension only talks to `localhost`.
 
@@ -96,4 +99,3 @@ Refactor the following code to be more functional:
 [MIT](https://opensource.org/licenses/MIT)
 
 Copyright (c) 2025-present, Quang Tran.
-
