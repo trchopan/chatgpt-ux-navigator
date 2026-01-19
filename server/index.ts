@@ -108,6 +108,53 @@ async function appendAssistantResponse(filePath: string, response: string): Prom
     await Bun.write(filePath, next);
 }
 
+async function concatFirstLevelFiles(absDir: string, rawDirPath: string): Promise<string[]> {
+    const out: string[] = [];
+
+    let names: string[];
+    try {
+        names = await readdir(absDir, {encoding: 'utf8'});
+    } catch {
+        return [`[ERROR: Unable to read directory: ${absDir}]`];
+    }
+
+    names.sort((a, b) => a.localeCompare(b));
+
+    for (const name of names) {
+        if (SKIP_DIR_NAMES.has(name)) continue;
+
+        const full = join(absDir, name);
+
+        let st;
+        try {
+            st = await stat(full);
+        } catch {
+            continue;
+        }
+
+        // First level only: skip subdirectories
+        if (!st.isFile()) continue;
+
+        const rawFilePath = join(rawDirPath, name);
+
+        let content: string;
+        try {
+            content = await Bun.file(full).text();
+        } catch {
+            content = `[ERROR: Unable to read file: ${full}]`;
+        }
+
+        out.push(`**File:** ${rawFilePath}`);
+        out.push('');
+        out.push('```');
+        out.push(content.replace(/\r\n/g, '\n').trimEnd());
+        out.push('```');
+        out.push('');
+    }
+
+    return out;
+}
+
 async function listPathsRecursive(absDir: string, baseDir: string = absDir): Promise<TreeNode[]> {
     const out: TreeNode[] = [];
 
@@ -168,14 +215,15 @@ async function buildPrompt(filePath: string): Promise<string> {
     const processedLines: string[] = [];
 
     for (const line of lines) {
-        const match = line.match(/^\s*@(\S+)\s*$/);
+        const match = line.match(/^\s*(@@?)(\S+)\s*$/);
 
         if (!match) {
             processedLines.push(line);
             continue;
         }
 
-        const rawPath = match[1]!;
+        const sigil = match[1]!; // "@" or "@@"
+        const rawPath = match[2]!; // the path
         const absPath = isAbsolute(rawPath) ? rawPath : resolve(FILES_ROOT, rawPath);
 
         // Security: prevent escaping FILES_ROOT
@@ -193,21 +241,26 @@ async function buildPrompt(filePath: string): Promise<string> {
         }
 
         if (st.isDirectory()) {
-            // @dirpath → List Paths only
+            if (sigil === '@@') {
+                // @@dirpath → concat first-level files content (same format as single file)
+                const chunks = await concatFirstLevelFiles(absPath, rawPath);
+                processedLines.push(...chunks);
+                continue;
+            }
+
+            // @dirpath → List Paths only (existing behavior)
             const tree = await listPathsRecursive(absPath);
             const formattedTree = formatTree(tree);
 
             processedLines.push(`\`\`\`\n${rawPath}`);
-
             for (const line of formattedTree) {
                 processedLines.push(line);
             }
-
             processedLines.push('```');
             continue;
         }
 
-        // @filepath → Read content
+        // @filepath / @@filepath → Read content (treat same as before)
         let content: string;
         try {
             content = await Bun.file(absPath).text();
@@ -215,7 +268,7 @@ async function buildPrompt(filePath: string): Promise<string> {
             content = `[ERROR: Unable to read file: ${absPath}]`;
         }
 
-		processedLines.push(`**File:** ${rawPath}`);
+        processedLines.push(`**File:** ${rawPath}`);
         processedLines.push('');
         processedLines.push('```');
         processedLines.push(content.replace(/\r\n/g, '\n').trimEnd());
