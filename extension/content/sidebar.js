@@ -1,6 +1,7 @@
 (() => {
     window.CGPT_NAV = window.CGPT_NAV || {};
-    const {C, dom, store, model, scroll, prompts, clipboard, markdown, chatInput} = window.CGPT_NAV;
+    const {C, dom, store, model, scroll, prompts, clipboard, markdown, chatInput, newChat} =
+        window.CGPT_NAV;
 
     // --- DOM caches for sidebar rendering
     /** @type {Map<string, HTMLElement>} */
@@ -12,7 +13,7 @@
     // --- Prompt section state
     /** @type {{filename:string, at:number, threadMessages:{role:'user'|'assistant', content:string}[]} | null} */
     let threadCache = null;
-	let promptsOpen = true;
+    let promptsOpen = true;
 
     // ----------------------------
     // DOM helpers
@@ -217,6 +218,7 @@
         <div class="title">Navigator</div>
 
         <div class="controls">
+			<button id="cgpt-nav-new-temp-chat" title="New temporary chat">🆕</button>
             <button id="cgpt-nav-save-response" title="Save response">💾</button>
             <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
             <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
@@ -392,6 +394,27 @@
                 return;
             }
             await ensureThreadLoaded(true);
+        });
+
+        dom.$('#cgpt-nav-new-temp-chat')?.addEventListener('click', async () => {
+            try {
+                const btn = document.getElementById('cgpt-nav-new-temp-chat');
+                const prev = btn ? btn.textContent : null;
+                if (btn) btn.textContent = '…';
+
+                const resp = await newChat?.startNewTemporaryChat?.();
+                if (!resp?.ok) {
+					console.error(resp);
+                    alert(resp?.error || 'Failed to start a new chat');
+                } else if (!resp?.temp) {
+                    // New chat worked, but temp toggle could not be confirmed/enabled
+                    alert('Started a new chat, but could not confirm Temporary Chat toggle.');
+                }
+
+                if (btn && prev != null) btn.textContent = prev;
+            } catch (e) {
+                alert(String(e?.message || e));
+            }
         });
 
         // Save last assistant response

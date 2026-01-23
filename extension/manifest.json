@@ -26,13 +26,21 @@
                 "content/chatInput.js",
                 "content/prompts.js",
                 "content/model.js",
+                "content/newChat.js",
                 "content/sidebar.js",
                 "content/observer.js",
                 "content/activeSection.js",
+                "content/streamTap.js",
                 "content/bootstrap.js"
             ],
             "css": ["styles.css"],
             "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": ["content/pageHook.js"],
+            "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"]
         }
     ],
     "options_ui": {

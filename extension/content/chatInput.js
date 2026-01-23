@@ -81,7 +81,6 @@
      * @param {string} text
      */
     function fallbackInsertContenteditable(el, text) {
-        // Prefer plain text; some editors dislike innerHTML changes.
         el.textContent = text;
 
         try {
@@ -93,7 +92,6 @@
                 })
             );
         } catch (_) {
-            // If InputEvent fails in edge cases, still keep content set.
             try {
                 const ev = document.createEvent('Event');
                 ev.initEvent('input', true, true);
@@ -119,14 +117,10 @@
         if (input.kind === 'contenteditable') {
             const el = input.el;
 
-            // Ensure focus + caret so paste goes to correct place
             moveCaretToEnd(el);
 
-            // Try paste route (best compatibility)
             const dispatched = dispatchPaste(el, t);
 
-            // Some editors ignore synthetic paste; ensure content is set anyway.
-            // We do not attempt to detect success reliably (varies per editor).
             if (!dispatched) {
                 fallbackInsertContenteditable(el, t);
             }
@@ -137,8 +131,67 @@
         return false;
     }
 
+    /**
+     * Best-effort submit of the current prompt.
+     * Returns true if it *attempted* to submit (click or key event).
+     * @returns {boolean}
+     */
+    function submitChatInput() {
+        // Prefer clicking the send button if available
+        const sendBtn =
+            /** common on chatgpt.com */
+            document.querySelector('button[data-testid="send-button"]') ||
+            /** fallback: aria-labels */
+            document.querySelector('button[aria-label="Send prompt"]') ||
+            document.querySelector('button[aria-label="Send"]') ||
+            document.querySelector('button[aria-label*="Send"]');
+
+        if (sendBtn instanceof HTMLButtonElement) {
+            // avoid clicking if disabled
+            if (!sendBtn.disabled) {
+                sendBtn.click();
+                return true;
+            }
+        } else if (sendBtn instanceof HTMLElement) {
+            // if it's not a button element, still try click
+            sendBtn.click();
+            return true;
+        }
+
+        // Fallback: dispatch Enter on the contenteditable
+        const input = findChatInput();
+        if (input?.kind === 'contenteditable') {
+            const el = input.el;
+            try {
+                el.focus();
+                const evDown = new KeyboardEvent('keydown', {
+                    key: 'Enter',
+                    code: 'Enter',
+                    bubbles: true,
+                    cancelable: true,
+                });
+                el.dispatchEvent(evDown);
+
+                const evUp = new KeyboardEvent('keyup', {
+                    key: 'Enter',
+                    code: 'Enter',
+                    bubbles: true,
+                    cancelable: true,
+                });
+                el.dispatchEvent(evUp);
+
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
     window.CGPT_NAV.chatInput = {
         findChatInput,
         setChatInputText,
+        submitChatInput,
     };
 })();
