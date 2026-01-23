@@ -124,7 +124,6 @@
 
         const existing = entryById.get(next.id);
 
-        // New entry
         if (!existing) {
             entryById.set(next.id, {
                 id: next.id,

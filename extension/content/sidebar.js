@@ -218,6 +218,7 @@
         <div class="title">Navigator</div>
 
         <div class="controls">
+			<button id="cgpt-nav-ws-toggle" title="Toggle WebSocket mode">🔌🟢</button>
 			<button id="cgpt-nav-new-temp-chat" title="New temporary chat">🆕</button>
             <button id="cgpt-nav-save-response" title="Save response">💾</button>
             <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
@@ -404,7 +405,7 @@
 
                 const resp = await newChat?.startNewTemporaryChat?.();
                 if (!resp?.ok) {
-					console.error(resp);
+                    console.error(resp);
                     alert(resp?.error || 'Failed to start a new chat');
                 } else if (!resp?.temp) {
                     // New chat worked, but temp toggle could not be confirmed/enabled
@@ -415,6 +416,35 @@
             } catch (e) {
                 alert(String(e?.message || e));
             }
+        });
+
+        // WebSocket mode toggle (per-tab UI, persisted preference)
+        function syncWsToggleButton() {
+            const btn = document.getElementById('cgpt-nav-ws-toggle');
+            if (!btn) return;
+
+            const on = !!store?.isWsEnabled?.();
+			btn.textContent = on ? '🔌🟢' : '🔌❌';
+            btn.title = on
+                ? 'WebSocket mode is ON (connected / streaming enabled)'
+                : 'WebSocket mode is OFF (no local WS connection)';
+        }
+
+        syncWsToggleButton();
+
+        dom.$('#cgpt-nav-ws-toggle')?.addEventListener('click', () => {
+            const currentlyOn = !!store?.isWsEnabled?.();
+            const next = !currentlyOn;
+
+            store?.setWsEnabled?.(next);
+
+            // Apply immediately in this tab
+            try {
+                if (next) window.CGPT_NAV.streamTap?.enable?.();
+                else window.CGPT_NAV.streamTap?.disable?.();
+            } catch (_) {}
+
+            syncWsToggleButton();
         });
 
         // Save last assistant response
