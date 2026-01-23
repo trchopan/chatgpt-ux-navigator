@@ -1,3 +1,4 @@
+// server/index.ts
 import {join, resolve, isAbsolute} from 'node:path';
 import {readdir, stat} from 'node:fs/promises';
 
@@ -346,7 +347,7 @@ type WsPayloadDoneOrClosed = {
 type WsPayload = WsPayloadSse | WsPayloadDoneOrClosed;
 
 type IncomingWebSocketMessage = {
-    type: 'sse' | 'done' | 'closed' | string;
+    type: 'sse' | 'done' | 'closed' | 'error' | string;
     payload: WsPayload;
 };
 
@@ -358,18 +359,193 @@ function safeParseJson(text: string): IncomingWebSocketMessage | null {
     }
 }
 
-// Track connected extension clients
-const clients = new Set<WebSocket>();
+// --- Assumption: only 1 websocket client ---
+let soleClient: WebSocket | null = null;
 
-function broadcastToClients(obj: any) {
-    const payload = JSON.stringify(obj);
-    for (const ws of clients) {
-        try {
-            ws.send(payload);
-        } catch {
-            // ignore
-        }
+// --- In-flight /responses SSE proxy state (single in-flight at a time) ---
+type InflightResponses = {
+    id: string;
+    created: number;
+    controller: ReadableStreamDefaultController<Uint8Array>;
+    encoder: TextEncoder;
+    closed: boolean;
+    timeoutHandle: any;
+
+    // OpenAI-like response stream bookkeeping
+    response: any; // minimal OpenAI Responses "response" object
+    outputTextItemId: string;
+    outputIndex: number;
+    contentIndex: number;
+
+    // Used to compute deltas from ChatGPT growing text
+    lastText: string;
+};
+
+let inflight: InflightResponses | null = null;
+
+function sseFrame(event: string | null, data: any): string {
+    const evLine = event ? `event: ${event}\n` : '';
+    let payload = '';
+    if (data === '[DONE]') {
+        payload = 'data: [DONE]\n\n';
+        return evLine + payload;
     }
+
+    let dataStr = '';
+    try {
+        dataStr = typeof data === 'string' ? data : JSON.stringify(data);
+    } catch {
+        dataStr = JSON.stringify({type: 'error', error: 'Could not stringify SSE payload'});
+    }
+
+    // SSE requires each line be prefixed with "data:"
+    const dataLines = dataStr
+        .split('\n')
+        .map(l => `data: ${l}`)
+        .join('\n');
+
+    return `${evLine}${dataLines}\n\n`;
+}
+
+function inflightEnqueue(event: string | null, data: any) {
+    if (!inflight || inflight.closed) return;
+    try {
+        inflight.controller.enqueue(inflight.encoder.encode(sseFrame(event, data)));
+    } catch {
+        inflightClose('response.error', {
+            type: 'response.error',
+            error: {message: 'Failed to enqueue SSE chunk'},
+        });
+    }
+}
+
+function inflightClose(finalEvent: string | null, finalData: any) {
+    if (!inflight || inflight.closed) return;
+    inflight.closed = true;
+
+    try {
+        clearTimeout(inflight.timeoutHandle);
+    } catch {}
+
+    // Send final event (best-effort)
+    try {
+        inflight.controller.enqueue(inflight.encoder.encode(sseFrame(finalEvent, finalData)));
+    } catch {}
+
+    // OpenAI-style terminal sentinel
+    try {
+        inflight.controller.enqueue(inflight.encoder.encode(sseFrame(null, '[DONE]')));
+    } catch {}
+
+    try {
+        inflight.controller.close();
+    } catch {}
+
+    inflight = null;
+}
+
+function sendToSoleClient(obj: any): boolean {
+    if (!soleClient) return false;
+    try {
+        soleClient.send(JSON.stringify(obj));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+// Try to extract the current full assistant text from ChatGPT internal SSE payload JSON.
+// We then delta it by comparing with inflight.lastText.
+function extractFullTextFromChatGPTPayload(obj: any): string | null {
+    const j = obj?.payload?.json;
+    if (!j || typeof j !== 'object') return null;
+
+    // Common-ish shapes observed in ChatGPT internal streams (best-effort):
+    // 1) { message: { content: { parts: ["..."] } } }
+    const p1 = j?.message?.content?.parts;
+    if (Array.isArray(p1) && typeof p1[0] === 'string') {
+        return String(p1[0]);
+    }
+
+    // 2) { message: { content: { text: "..." } } }
+    const t2 = j?.message?.content?.text;
+    if (typeof t2 === 'string') return t2;
+
+    // 3) { delta: "..." } or { text: "..." }
+    const t3 = j?.delta;
+    if (typeof t3 === 'string') return t3;
+
+    const t4 = j?.text;
+    if (typeof t4 === 'string') return t4;
+
+    // 4) { content: "..." }
+    const t5 = j?.content;
+    if (typeof t5 === 'string') return t5;
+
+    return null;
+}
+
+// Compute a delta given a "full text so far" snapshot. If it doesn't extend,
+// return null so we don't emit misleading deltas.
+function computeDelta(fullText: string): string | null {
+    if (!inflight) return null;
+    const prev = inflight.lastText || '';
+    const next = fullText || '';
+
+    if (next === prev) return null;
+    if (next.startsWith(prev)) return next.slice(prev.length);
+
+    // If it changed non-monotonically (edits), emit the whole thing as a reset delta.
+    // This is not perfect, but keeps the stream moving.
+    return next;
+}
+
+// Emit OpenAI Responses style events
+function emitResponseCreated() {
+    if (!inflight) return;
+
+    inflightEnqueue('response.created', {
+        type: 'response.created',
+        response: inflight.response,
+    });
+}
+
+function emitOutputTextDelta(delta: string) {
+    if (!inflight) return;
+
+    inflightEnqueue('response.output_text.delta', {
+        type: 'response.output_text.delta',
+        delta,
+        item_id: inflight.outputTextItemId,
+        output_index: inflight.outputIndex,
+        content_index: inflight.contentIndex,
+    });
+}
+
+function emitGenericEvent(rawObj: any) {
+    if (!inflight) return;
+
+    inflightEnqueue('response.event', {
+        type: 'response.event',
+        response_id: inflight.id,
+        raw: rawObj,
+    });
+}
+
+function emitResponseCompleted(status: 'completed' | 'cancelled' | 'error', extra?: any) {
+    if (!inflight) return;
+
+    inflight.response.status = status;
+    if (typeof inflight.lastText === 'string') {
+        // keep a minimal "output_text" snapshot for convenience
+        inflight.response.output_text = inflight.lastText;
+    }
+    if (extra) inflight.response.meta = {...(inflight.response.meta || {}), ...extra};
+
+    inflightEnqueue('response.completed', {
+        type: 'response.completed',
+        response: inflight.response,
+    });
 }
 
 // OpenAI-ish “Responses API” minimal request parsing
@@ -449,7 +625,29 @@ Bun.serve<WsData>({
         }
 
         // OpenAI-ish endpoint: POST /responses
+        // Streams back OpenAI Responses-style SSE events based on extension stream tap.
+        // Assumes exactly 1 websocket client and 1 in-flight request.
         if (req.method === 'POST' && url.pathname === '/responses') {
+            if (inflight) {
+                return new Response(
+                    JSON.stringify({error: 'Another /responses request is already in-flight.'}),
+                    {
+                        status: 409,
+                        headers: {...corsHeaders, 'Content-Type': 'application/json'},
+                    }
+                );
+            }
+
+            if (!soleClient) {
+                return new Response(
+                    JSON.stringify({error: 'No WebSocket client connected (/ws).'}),
+                    {
+                        status: 503,
+                        headers: {...corsHeaders, 'Content-Type': 'application/json'},
+                    }
+                );
+            }
+
             let body: any = null;
             try {
                 body = await req.json();
@@ -476,27 +674,96 @@ Bun.serve<WsData>({
             const id = `resp_${crypto.randomUUID()}`;
             const created = Math.floor(Date.now() / 1000);
 
-            // Broadcast to all connected extension clients
-            broadcastToClients({
-                type: 'prompt',
-                id,
-                created,
-                input: prompt,
+            const encoder = new TextEncoder();
+
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    const timeoutHandle = setTimeout(() => {
+                        // timeout as OpenAI-like error + completed + DONE
+                        if (!inflight) return;
+                        emitResponseCompleted('error', {
+                            error: 'Timed out waiting for extension SSE',
+                        });
+                        inflightClose('response.error', {
+                            type: 'response.error',
+                            error: {message: 'Timed out waiting for extension SSE'},
+                        });
+                    }, 60_000);
+
+                    const outputTextItemId = `item_${crypto.randomUUID()}`;
+
+                    // Minimal OpenAI Responses "response" object
+                    const responseObj = {
+                        id,
+                        object: 'response',
+                        created,
+                        status: 'in_progress',
+                        // Best-effort, since we don't know the model slug reliably here
+                        model: null,
+                        // Provide request input for traceability
+                        input: prompt,
+                        // Provide a minimal output scaffold
+                        output: [
+                            {
+                                id: outputTextItemId,
+                                object: 'output_text',
+                                content: [],
+                            },
+                        ],
+                        output_text: '',
+                    };
+
+                    inflight = {
+                        id,
+                        created,
+                        controller,
+                        encoder,
+                        closed: false,
+                        timeoutHandle,
+                        response: responseObj,
+                        outputTextItemId,
+                        outputIndex: 0,
+                        contentIndex: 0,
+                        lastText: '',
+                    };
+
+                    // Send prompt to extension
+                    const ok = sendToSoleClient({type: 'prompt', id, created, input: prompt});
+                    if (!ok) {
+                        emitResponseCompleted('error', {
+                            error: 'Failed to send prompt to WS client',
+                        });
+                        inflightClose('response.error', {
+                            type: 'response.error',
+                            error: {message: 'Failed to send prompt to WS client'},
+                        });
+                        return;
+                    }
+
+                    // OpenAI-style created event
+                    emitResponseCreated();
+                },
+
+                cancel() {
+                    if (inflight && inflight.id === id) {
+                        emitResponseCompleted('cancelled', {reason: 'client_disconnected'});
+                        inflightClose('response.cancelled', {
+                            type: 'response.cancelled',
+                            response_id: id,
+                        });
+                    }
+                },
             });
 
-            // Minimal OpenAI-ish response object
-            return new Response(
-                JSON.stringify({
-                    id,
-                    object: 'response',
-                    created,
-                    status: 'queued',
-                }),
-                {
-                    status: 200,
-                    headers: {...corsHeaders, 'Content-Type': 'application/json'},
-                }
-            );
+            return new Response(stream, {
+                status: 200,
+                headers: {
+                    ...corsHeaders,
+                    'Content-Type': 'text/event-stream; charset=utf-8',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    Connection: 'keep-alive',
+                },
+            });
         }
 
         if (req.method === 'GET' && url.pathname === '/list') {
@@ -580,7 +847,7 @@ Bun.serve<WsData>({
                     `GET  /list              - List all .md prompts\n` +
                     `GET  /prompt/<filename> - Get processed content of a prompt\n` +
                     `POST /prompt/<filename> - Append assistant response\n` +
-                    `POST /responses         - Push a user prompt to extension via WebSocket\n` +
+                    `POST /responses         - Push a user prompt to extension via WebSocket (NOW streams SSE back)\n` +
                     `GET  /ws                - WebSocket ingest for streaming events + prompt delivery\n`,
                 {
                     status: 200,
@@ -597,7 +864,8 @@ Bun.serve<WsData>({
 
     websocket: {
         open(ws) {
-            clients.add(ws as any);
+            // Single-client assumption: newest connection wins.
+            soleClient = ws as any;
             ws.send(JSON.stringify({type: 'welcome', at: Date.now()}));
         },
 
@@ -608,23 +876,69 @@ Bun.serve<WsData>({
                     : Buffer.from(message as Uint8Array).toString('utf8');
 
             const obj = safeParseJson(text);
-
             if (!obj) {
                 console.log('[ws] non-json message:', text.slice(0, 300));
                 return;
             }
 
             const t = String(obj.type || '');
-            const metaUrl = obj?.payload?.meta?.url ? String(obj.payload.meta.url) : '';
-            if (t) {
-                console.log('[ws]', t, metaUrl);
-            } else {
-                console.log('[ws] message:', obj);
+            const metaUrl = obj?.payload?.meta?.url ? String((obj as any).payload.meta.url) : '';
+
+            // If a /responses call is in-flight, forward extension stream events into OpenAI SSE.
+            if (inflight) {
+                if (t === 'sse') {
+                    // 1) Try to derive a text delta from ChatGPT JSON payload (best-effort).
+                    const fullText = extractFullTextFromChatGPTPayload(obj);
+                    if (typeof fullText === 'string') {
+                        const delta = computeDelta(fullText);
+                        if (delta) {
+                            inflight.lastText = fullText;
+                            inflight.response.output_text = fullText;
+                            emitOutputTextDelta(delta);
+                        } else {
+                            // No delta, but still allow raw for debugging if you want visibility.
+                            // emitGenericEvent(obj);
+                        }
+                    } else {
+                        // No text extracted; pass through as a generic OpenAI-like event
+                        emitGenericEvent(obj);
+                    }
+                } else if (t === 'done') {
+                    emitResponseCompleted('completed');
+                    inflightClose(null, '[DONE]');
+                    return;
+                } else if (t === 'closed') {
+                    // treat as completion if we didn't get done
+                    emitResponseCompleted('completed', {reason: 'stream_closed'});
+                    inflightClose(null, '[DONE]');
+                    return;
+                } else if (t === 'error') {
+                    emitResponseCompleted('error', {reason: 'extension_error'});
+                    inflightClose('response.error', {
+                        type: 'response.error',
+                        error: {message: 'Extension reported error', detail: obj},
+                    });
+                    return;
+                } else {
+                    emitGenericEvent(obj);
+                }
             }
+
+            if (t) console.log('[ws]', t, metaUrl);
+            else console.log('[ws] message:', obj);
         },
 
         close(ws) {
-            clients.delete(ws as any);
+            if (soleClient === (ws as any)) soleClient = null;
+
+            // If the WS closes mid-flight, end the HTTP stream in OpenAI style.
+            if (inflight) {
+                emitResponseCompleted('error', {error: 'WebSocket closed'});
+                inflightClose('response.error', {
+                    type: 'response.error',
+                    error: {message: 'WebSocket closed'},
+                });
+            }
         },
     },
 });
