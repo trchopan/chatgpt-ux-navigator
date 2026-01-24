@@ -1,4 +1,3 @@
-// extension/content/streamTap.js
 (() => {
     window.CGPT_NAV = window.CGPT_NAV || {};
     const NS = 'CGPT_NAV_STREAM_TAP';
@@ -14,6 +13,11 @@
 
     let enabled = false;
     let pageHookInjected = false;
+
+    // Prompt queue to serialize "new chat -> inject -> submit"
+    /** @type {Array<{id?:string, created?:number, input:string}>} */
+    const promptQueue = [];
+    let promptProcessing = false;
 
     function safeJsonStringify(obj) {
         try {
@@ -60,6 +64,132 @@
             );
         };
 
+        // ----------------------------
+        // helpers for queued prompt processing
+        // ----------------------------
+        function sleep(ms) {
+            return new Promise(r => setTimeout(r, ms));
+        }
+
+        /**
+         * Wait until fn() returns truthy, or timeout.
+         * @template T
+         * @param {() => T} fn
+         * @param {{timeoutMs?: number, intervalMs?: number}} [opts]
+         * @returns {Promise<T|null>}
+         */
+        async function waitFor(fn, opts = {}) {
+            const timeoutMs = opts.timeoutMs ?? 12_000;
+            const intervalMs = opts.intervalMs ?? 120;
+
+            const start = Date.now();
+            while (Date.now() - start < timeoutMs) {
+                try {
+                    const v = fn();
+                    if (v) return v;
+                } catch (_) {
+                    // ignore transient DOM errors
+                }
+                await sleep(intervalMs);
+            }
+            return null;
+        }
+
+        async function ensureComposerReady() {
+            // Prefer your chatInput finder if present; otherwise DOM fallback
+            const ok = await waitFor(() => {
+                const ci = window.CGPT_NAV.chatInput;
+                if (ci?.findChatInput) return ci.findChatInput();
+                return (
+                    document.querySelector(
+                        '[data-testid="prompt-textarea"][contenteditable="true"]'
+                    ) || document.querySelector('form [contenteditable="true"]')
+                );
+            });
+            return !!ok;
+        }
+
+        /**
+         * Process queued prompts sequentially:
+         * - create new temporary chat
+         * - wait for composer
+         * - inject and submit
+         */
+        async function processPromptQueue() {
+            if (promptProcessing) return;
+            promptProcessing = true;
+
+            try {
+                while (promptQueue.length > 0) {
+                    const item = promptQueue.shift();
+                    const prompt = String(item?.input ?? '');
+                    if (!prompt.trim()) continue;
+
+                    // 1) Start new temporary chat (best-effort)
+                    try {
+                        const nc = window.CGPT_NAV.newChat;
+                        if (nc?.startNewTemporaryChat) {
+                            await nc.startNewTemporaryChat();
+                        }
+                    } catch (_) {
+                        // Non-fatal: if this fails, still try to inject into whatever chat is present
+                    }
+
+                    // 2) Wait for navigation/UI mount so composer exists
+                    await ensureComposerReady();
+
+                    // 3) Inject prompt + submit
+                    try {
+                        const ci = window.CGPT_NAV.chatInput;
+                        const okSet = ci?.setChatInputText ? ci.setChatInputText(prompt) : false;
+
+                        if (!okSet) {
+                            // Retry briefly; ChatGPT sometimes remounts editor after navigation
+                            const setOkAfter = await waitFor(
+                                () => {
+                                    const ci2 = window.CGPT_NAV.chatInput;
+                                    return ci2?.setChatInputText
+                                        ? ci2.setChatInputText(prompt)
+                                        : false;
+                                },
+                                {timeoutMs: 5000, intervalMs: 150}
+                            );
+
+                            if (!setOkAfter) continue;
+                        }
+
+                        // small delay so editor state settles before clicking send
+                        await sleep(120);
+
+                        try {
+                            ci?.submitChatInput?.();
+                        } catch (_) {}
+                    } catch (_) {
+                        // ignore and continue to next queued prompt
+                    }
+
+                    // 4) Small spacing to avoid racing subsequent new chat clicks
+                    await sleep(250);
+                }
+            } finally {
+                promptProcessing = false;
+            }
+        }
+
+        function enqueuePromptMessage(msg) {
+            const prompt = typeof msg?.input === 'string' ? msg.input : '';
+            if (!prompt.trim()) return;
+
+            promptQueue.push({
+                id: msg?.id,
+                created: msg?.created,
+                input: prompt,
+            });
+
+            // Kick processor (fire-and-forget)
+            processPromptQueue();
+        }
+
         // Receive server -> extension messages (e.g. prompts)
         ws.onmessage = ev => {
             let msg = null;
@@ -74,24 +204,9 @@
             // Expected:
             // { type: "prompt", id: "...", created: <unix>, input: "..." }
             if (msg.type === 'prompt') {
-                const prompt = typeof msg.input === 'string' ? msg.input : '';
-                if (!prompt.trim()) return;
-
-                try {
-                    const ci = window.CGPT_NAV.chatInput;
-                    if (!ci?.setChatInputText) return;
-
-                    const ok = ci.setChatInputText(prompt);
-                    if (!ok) return;
-
-                    setTimeout(() => {
-                        try {
-                            window.CGPT_NAV.chatInput?.submitChatInput?.();
-                        } catch (_) {}
-                    }, 120);
-                } catch (_) {
-                    // ignore
-                }
+                // Always create a new temporary chat before injecting
+                enqueuePromptMessage(msg);
+                return;
             }
         };
 
