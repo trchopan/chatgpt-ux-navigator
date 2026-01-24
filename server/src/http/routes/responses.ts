@@ -14,6 +14,57 @@ import {sseResponseHeaders} from '../responses/sse';
 import {corsHeaders} from '../cors';
 
 /**
+ * Renders tools into a Markdown section.
+ */
+function renderTools(tools: any[], toolChoice?: any): string {
+    if (!Array.isArray(tools) || tools.length === 0) return '';
+
+    const lines = ['# TOOLS', '', 'You have access to the following tools:', ''];
+
+    for (const t of tools) {
+        if (t.type === 'function' && t.function) {
+            lines.push(`## ${t.function.name}`);
+            if (t.function.description) {
+                lines.push(`${t.function.description}`);
+            }
+            lines.push('');
+            lines.push('Parameters (JSON Schema):');
+            lines.push('```json');
+            lines.push(JSON.stringify(t.function.parameters, null, 2));
+            lines.push('```');
+            lines.push('');
+        }
+    }
+
+    lines.push('# TOOL USAGE');
+    lines.push('To use a tool, you MUST output a JSON object in the following format:');
+    lines.push('```json');
+    lines.push('{ "tool_calls": [ { "name": "tool_name", "arguments": { ... } } ] }');
+    lines.push('```');
+
+    if (toolChoice) {
+        if (
+            typeof toolChoice === 'object' &&
+            toolChoice.type === 'function' &&
+            toolChoice.function?.name
+        ) {
+            lines.push('');
+            lines.push(
+                `IMPORTANT: You MUST use the tool "${toolChoice.function.name}" in your response.`
+            );
+        } else if (toolChoice === 'required') {
+            lines.push('');
+            lines.push('IMPORTANT: You MUST use at least one tool in your response.');
+        } else if (toolChoice === 'none') {
+            lines.push('');
+            lines.push('IMPORTANT: Do NOT use any tools in your response.');
+        }
+    }
+
+    return lines.join('\n');
+}
+
+/**
  * Extracts the user prompt from the request body.
  * Supports simple strings, OpenAI-like message arrays, and prompt/input fields.
  */
@@ -44,41 +95,61 @@ function extractUserPrompt(body: any): string | null {
         return null;
     }
 
-    // Fast paths
-    if (typeof body.input === 'string' && body.input.trim()) return body.input.trim();
-    if (typeof body.prompt === 'string' && body.prompt.trim()) return body.prompt.trim();
-
-    // OpenAI-ish shape
-    const input = body.input;
-    if (!Array.isArray(input)) return null;
-
+    let userPrompt: string | null = null;
     const systemMessages: string[] = [];
-    const userMessages: string[] = [];
+    const toolsSection = renderTools(body.tools, body.tool_choice);
 
-    for (const msg of input) {
-        if (!msg || !msg.role) continue;
+    // Fast paths
+    if (typeof body.input === 'string' && body.input.trim()) {
+        userPrompt = body.input.trim();
+    } else if (typeof body.prompt === 'string' && body.prompt.trim()) {
+        userPrompt = body.prompt.trim();
+    } else {
+        // OpenAI-ish shape
+        const input = body.input;
+        if (Array.isArray(input)) {
+            const userMessages: string[] = [];
 
-        const role = String(msg.role).toLowerCase();
-        const text = extractText(msg.content);
-        if (!text) continue;
+            for (const msg of input) {
+                if (!msg || !msg.role) continue;
 
-        if (role === 'user') {
-            userMessages.push(text);
-        } else {
-            systemMessages.push(text);
+                const role = String(msg.role).toLowerCase();
+                const text = extractText(msg.content);
+                if (!text) continue;
+
+                if (role === 'user') {
+                    userMessages.push(text);
+                } else if (role === 'system' || role === 'developer') {
+                    systemMessages.push(text);
+                }
+            }
+
+            if (userMessages.length > 0) {
+                userPrompt = userMessages.join('\n\n').trim();
+            }
         }
     }
 
-    const combinedUserText = userMessages.join('\n\n').trim();
+    if (!userPrompt) return null;
+
+    const sections: string[] = [];
+
     const combinedSystemText = systemMessages.join('\n\n').trim();
-
-    if (!combinedUserText) return null;
-
     if (combinedSystemText) {
-        return `# INSTRUCTION\n\n${combinedSystemText}\n\n# REQUEST\n\n${combinedUserText}`;
+        sections.push(`# INSTRUCTION\n\n${combinedSystemText}`);
     }
 
-    return combinedUserText;
+    if (toolsSection) {
+        sections.push(toolsSection);
+    }
+
+    sections.push(`# REQUEST\n\n${userPrompt}`);
+
+    if (sections.length === 1 && !combinedSystemText && !toolsSection) {
+        return userPrompt;
+    }
+
+    return sections.join('\n\n');
 }
 
 /**

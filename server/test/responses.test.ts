@@ -15,10 +15,6 @@ const config: AppConfig = {
     noStream: false,
 };
 
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-};
-
 describe('POST /responses', () => {
     beforeEach(() => {
         setSoleClient(null);
@@ -36,7 +32,8 @@ describe('POST /responses', () => {
             body: JSON.stringify({input: 'Hello'}),
         });
 
-        const res = await handlePostResponses(req, corsHeaders, config);
+
+        const res = await handlePostResponses(req, config, new URL(req.url));
         expect(res.status).toBe(503);
     });
 
@@ -46,7 +43,7 @@ describe('POST /responses', () => {
             method: 'POST',
             body: 'invalid json',
         });
-        const res = await handlePostResponses(req, corsHeaders, config);
+        const res = await handlePostResponses(req, config, new URL(req.url));
         expect(res.status).toBe(400);
     });
 
@@ -56,7 +53,7 @@ describe('POST /responses', () => {
             method: 'POST',
             body: JSON.stringify({}),
         });
-        const res = await handlePostResponses(req, corsHeaders, config);
+        const res = await handlePostResponses(req, config, new URL(req.url));
         expect(res.status).toBe(400);
     });
 
@@ -83,7 +80,7 @@ describe('POST /responses', () => {
             body: JSON.stringify({input: 'Hello JSON'}),
         });
 
-        const res = await handlePostResponses(req, corsHeaders, config);
+        const res = await handlePostResponses(req, config, new URL(req.url));
 
         expect(res.status).toBe(200);
         const body = (await res.json()) as any;
@@ -107,7 +104,7 @@ describe('POST /responses', () => {
             body: JSON.stringify({input: 'Hello Stream', stream: true}),
         });
 
-        const res = await handlePostResponses(req, corsHeaders, config);
+        const res = await handlePostResponses(req, config, new URL(req.url));
 
         expect(res.status).toBe(200);
         expect(res.headers.get('Content-Type')).toContain('text/event-stream');
@@ -158,13 +155,50 @@ describe('POST /responses', () => {
             }),
         });
 
-        await handlePostResponses(req, corsHeaders, config);
+        await handlePostResponses(req, config, new URL(req.url));
 
         // Check how it formats the prompt
         expect(capturedInput).toContain('# INSTRUCTION');
         expect(capturedInput).toContain('Sys');
         expect(capturedInput).toContain('# REQUEST');
         expect(capturedInput).toContain('Usr');
+    });
+
+
+    it('should inject tools into the prompt', async () => {
+        let capturedInput: string = '';
+        const mockSend = mock((msg: string) => {
+            const parsed = JSON.parse(msg);
+            capturedInput = parsed.input;
+            inflightTerminate();
+        });
+        setSoleClient({send: mockSend} as any);
+
+        const req = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({
+                input: 'User Request',
+                tools: [
+                    {
+                        type: 'function',
+                        function: {
+                            name: 'test_tool',
+                            description: 'A test tool',
+                            parameters: {type: 'object', properties: {foo: {type: 'string'}}},
+                        },
+                    },
+                ],
+            }),
+        });
+
+        await handlePostResponses(req, config, new URL(req.url));
+
+        expect(capturedInput).toContain('# TOOLS');
+        expect(capturedInput).toContain('## test_tool');
+        expect(capturedInput).toContain('A test tool');
+        expect(capturedInput).toContain('# TOOL USAGE');
+        expect(capturedInput).toContain('# REQUEST');
+        expect(capturedInput).toContain('User Request');
     });
 
     it('should return 409 if another request is in-flight', async () => {
@@ -178,7 +212,7 @@ describe('POST /responses', () => {
         });
 
         // Start it but don't await the result yet (it waits for timeout or completion)
-        const p1 = handlePostResponses(req1, corsHeaders, config);
+        const p1 = handlePostResponses(req1, config, new URL(req1.url));
 
         // Allow microtask queue to process so inflight is set
         await new Promise(r => setTimeout(r, 10));
@@ -189,7 +223,7 @@ describe('POST /responses', () => {
             body: JSON.stringify({input: 'Req 2'}),
         });
 
-        const res2 = await handlePostResponses(req2, corsHeaders, config);
+        const res2 = await handlePostResponses(req2, config, new URL(req2.url));
         expect(res2.status).toBe(409);
 
         // Cleanup: terminate inflight to let p1 resolve (as error or completed)
