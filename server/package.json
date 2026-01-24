@@ -1,6 +1,9 @@
 {
   "name": "server",
-  "module": "index.ts",
+  "module": "src/index.ts",
+  "scripts": {
+    "start": "bun run src/index.ts"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
