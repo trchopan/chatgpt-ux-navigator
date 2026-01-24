@@ -1,5 +1,6 @@
 import {sseFrame} from './sse';
 import type {ResponseObject} from '../../types/responses';
+import {parseToolCallsFromText} from '../../prompts/parser';
 
 type InflightMode = 'stream' | 'json';
 
@@ -286,6 +287,8 @@ export function emitContentPartDone(fullText: string) {
 export function emitOutputItemDone(fullText: string) {
     if (!inflight) return;
 
+    const {text: cleanText, tool_calls} = parseToolCallsFromText(fullText);
+
     const item: any = {
         id: inflight.messageItemId,
         type: 'message',
@@ -295,11 +298,22 @@ export function emitOutputItemDone(fullText: string) {
                 type: 'output_text',
                 annotations: [],
                 logprobs: [],
-                text: fullText,
+                text: cleanText,
             },
         ],
         role: 'assistant',
     };
+
+    if (tool_calls && tool_calls.length > 0) {
+        item.tool_calls = tool_calls;
+        // OpenAI convention: if tool_calls are present and text is empty, content is null.
+        // But here we might have thought process text, so we keep content if text is not empty.
+        // If text is empty, we can set content to null or keep it as empty array/empty text.
+        // Let's keep it as is (content with potentially empty text) unless we want strict OpenAI compat.
+        // Strict OpenAI: content is string or null (or array of parts).
+        // If cleanText is empty, let's keep the empty text part or just not have it?
+        // For safety, let's keep the content array.
+    }
 
     if (Array.isArray(inflight.response.output)) {
         inflight.response.output[inflight.outputIndex] = item;
@@ -325,7 +339,8 @@ export function emitResponseCompleted(status: ResponseObject['status'], extra?: 
     }
 
     if (typeof inflight.lastText === 'string') {
-        inflight.response.output_text = inflight.lastText;
+        const {text: cleanText} = parseToolCallsFromText(inflight.lastText);
+        inflight.response.output_text = cleanText;
     }
 
     if (extra) {

@@ -6,6 +6,7 @@ import {
     getInflight,
     inflightTerminate,
     emitResponseCompleted,
+    emitOutputItemDone,
 } from '../src/http/responses/inflight';
 
 const config: AppConfig = {
@@ -201,6 +202,40 @@ describe('POST /responses', () => {
         expect(capturedInput).toContain('User Request');
     });
 
+    it('should inject flattened tools into the prompt', async () => {
+        let capturedInput: string = '';
+        const mockSend = mock((msg: string) => {
+            const parsed = JSON.parse(msg);
+            capturedInput = parsed.input;
+            inflightTerminate();
+        });
+        setSoleClient({send: mockSend} as any);
+
+        const req = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({
+                input: 'User Request',
+                tools: [
+                    {
+                        type: 'function',
+                        name: 'flat_tool',
+                        description: 'A flat tool',
+                        parameters: {type: 'object', properties: {bar: {type: 'string'}}},
+                    },
+                ],
+            }),
+        });
+
+        await handlePostResponses(req, config, new URL(req.url));
+
+        expect(capturedInput).toContain('# TOOLS');
+        expect(capturedInput).toContain('## flat_tool');
+        expect(capturedInput).toContain('A flat tool');
+        expect(capturedInput).toContain('# TOOL USAGE');
+        expect(capturedInput).toContain('# REQUEST');
+        expect(capturedInput).toContain('User Request');
+    });
+
     it('should return 409 if another request is in-flight', async () => {
         // 1. Setup a client that receives but doesn't immediately finish
         setSoleClient({send: () => {}} as any);
@@ -233,5 +268,53 @@ describe('POST /responses', () => {
         } catch (e) {
             // Expected error or resolved error object
         }
+    });
+
+    it('should extract tool calls from text response', async () => {
+        let sentMessage: string | null = null;
+        const mockSend = mock((msg: string) => {
+            sentMessage = msg;
+            // Simulate extension sending back text with tool call
+            const current = getInflight();
+            if (current) {
+                // Manually trigger the events the WS handler would trigger
+                // But since we can't easily access the internal 'lastText' of inflight from here without using WS handler logic,
+                // we'll just rely on emitOutputItemDone if possible, but that's internal.
+                // Instead, let's just inspect the result after we force completion via internal helpers.
+                
+                // We mock the "accumulation" of text
+                const text = `Thinking...
+\`\`\`json
+{ "tool_calls": [{ "name": "foo", "arguments": {} }] }
+\`\`\`
+`;
+                current.lastText = text;
+                
+                // Simulate the "done" event flow
+                emitOutputItemDone(text);
+                emitResponseCompleted('completed');
+                inflightTerminate();
+            }
+        });
+
+        setSoleClient({send: mockSend} as any);
+
+        const req = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Call foo'}),
+        });
+
+        const res = await handlePostResponses(req, config, new URL(req.url));
+        const body = await res.json() as any;
+
+        expect(body.status).toBe('completed');
+        // Check if text was cleaned
+        expect(body.output_text.trim()).toBe('Thinking...');
+        
+        // Check output item structure
+        const item = body.output[0];
+        expect(item.content[0].text.trim()).toBe('Thinking...');
+        expect(item.tool_calls).toBeDefined();
+        expect(item.tool_calls[0].name).toBe('foo');
     });
 });

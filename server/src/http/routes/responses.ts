@@ -18,19 +18,25 @@ import {corsHeaders} from '../cors';
  */
 function renderTools(tools: any[], toolChoice?: any): string {
     if (!Array.isArray(tools) || tools.length === 0) return '';
-
     const lines = ['# TOOLS', '', 'You have access to the following tools:', ''];
 
     for (const t of tools) {
-        if (t.type === 'function' && t.function) {
-            lines.push(`## ${t.function.name}`);
-            if (t.function.description) {
-                lines.push(`${t.function.description}`);
+        const func = t.function || t;
+        if (t.type === 'function' && func?.name) {
+            lines.push(`## ${func.name}`);
+            lines.push('');
+            lines.push(`Function Name: \`${func.name}\``);
+            lines.push('');
+
+            if (func.description) {
+                lines.push('');
+                lines.push(`${func.description}`);
+                lines.push('');
             }
             lines.push('');
             lines.push('Parameters (JSON Schema):');
             lines.push('```json');
-            lines.push(JSON.stringify(t.function.parameters, null, 2));
+            lines.push(JSON.stringify(func.parameters, null, 2));
             lines.push('```');
             lines.push('');
         }
@@ -43,15 +49,10 @@ function renderTools(tools: any[], toolChoice?: any): string {
     lines.push('```');
 
     if (toolChoice) {
-        if (
-            typeof toolChoice === 'object' &&
-            toolChoice.type === 'function' &&
-            toolChoice.function?.name
-        ) {
+        const tcFunc = toolChoice.function || toolChoice;
+        if (typeof toolChoice === 'object' && toolChoice.type === 'function' && tcFunc?.name) {
             lines.push('');
-            lines.push(
-                `IMPORTANT: You MUST use the tool "${toolChoice.function.name}" in your response.`
-            );
+            lines.push(`IMPORTANT: You MUST use the tool "${tcFunc.name}" in your response.`);
         } else if (toolChoice === 'required') {
             lines.push('');
             lines.push('IMPORTANT: You MUST use at least one tool in your response.');
@@ -62,6 +63,34 @@ function renderTools(tools: any[], toolChoice?: any): string {
     }
 
     return lines.join('\n');
+}
+
+/**
+ * Renders response format instructions into a Markdown section.
+ */
+function renderResponseFormat(format: any): string {
+    if (!format || typeof format !== 'object') return '';
+
+    if (format.type === 'json_object') {
+        return '# RESPONSE FORMAT\n\nYou must output a JSON object.';
+    }
+
+    if (format.type === 'json_schema' && format.json_schema) {
+        const schema = format.json_schema.schema;
+        const name = format.json_schema.name;
+        const description = format.json_schema.description;
+
+        const lines = ['# RESPONSE FORMAT', ''];
+        lines.push('You must output a JSON object matching the following schema:');
+        if (name) lines.push(`Schema Name: ${name}`);
+        if (description) lines.push(`Description: ${description}`);
+        lines.push('```json');
+        lines.push(JSON.stringify(schema, null, 2));
+        lines.push('```');
+        return lines.join('\n');
+    }
+
+    return '';
 }
 
 /**
@@ -98,6 +127,7 @@ function extractUserPrompt(body: any): string | null {
     let userPrompt: string | null = null;
     const systemMessages: string[] = [];
     const toolsSection = renderTools(body.tools, body.tool_choice);
+    const responseFormatSection = renderResponseFormat(body.response_format);
 
     // Fast paths
     if (typeof body.input === 'string' && body.input.trim()) {
@@ -143,9 +173,13 @@ function extractUserPrompt(body: any): string | null {
         sections.push(toolsSection);
     }
 
+    if (responseFormatSection) {
+        sections.push(responseFormatSection);
+    }
+
     sections.push(`# REQUEST\n\n${userPrompt}`);
 
-    if (sections.length === 1 && !combinedSystemText && !toolsSection) {
+    if (sections.length === 1 && !combinedSystemText && !toolsSection && !responseFormatSection) {
         return userPrompt;
     }
 
@@ -178,6 +212,7 @@ function createResponseObject(id: string, createdAt: number, body: any, prompt: 
         prompt_cache_key: null,
         prompt_cache_retention: null,
         reasoning: {effort: 'none', summary: null},
+        response_format: body?.response_format ?? null,
         safety_identifier: null,
         service_tier: 'default',
         store: true,
