@@ -2,15 +2,18 @@
 export type ResponseObject = {
     id: string;
     object: 'response';
-    created: number;
+    created_at: number;
+    completed_at: number | null;
     status: 'in_progress' | 'completed' | 'cancelled' | 'error';
     model: string | null;
-    input: string;
-    output: Array<{
-        id: string;
-        object: 'output_text';
-        content: any[];
-    }>;
+
+    // We keep this as a convenience for debugging (not OpenAI exact)
+    input: any;
+
+    output: Array<any>;
     output_text: string;
+
+    usage: any | null;
     meta?: any;
+    metadata?: any;
 };

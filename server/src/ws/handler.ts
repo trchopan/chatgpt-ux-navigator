@@ -1,13 +1,16 @@
-import type { ServerWebSocket } from 'bun';
-import type { WsData } from '../types/ws';
-import { setSoleClient, sendToSoleClient } from './hub';
-import { safeParseJson } from './parse';
-import { extractFullTextFromChatGPTPayload, computeDelta } from './extract';
+import type {ServerWebSocket} from 'bun';
+import type {WsData} from '../types/ws';
+import {setSoleClient} from './hub';
+import {safeParseJson} from './parse';
+import {extractFullTextFromChatGPTPayload, computeDelta} from './extract';
 import {
     getInflight,
-    inflightClose,
+    inflightTerminate,
     emitResponseCompleted,
     emitOutputTextDelta,
+    emitOutputTextDone,
+    emitContentPartDone,
+    emitOutputItemDone,
     emitGenericEvent,
 } from '../http/responses/inflight';
 
@@ -15,7 +18,7 @@ export const websocketHandlers = {
     open(ws: ServerWebSocket<WsData>) {
         // Single-client assumption: newest connection wins.
         setSoleClient(ws as unknown as WebSocket);
-        ws.send(JSON.stringify({ type: 'welcome', at: Date.now() }));
+        ws.send(JSON.stringify({type: 'welcome', at: Date.now()}));
     },
 
     message(ws: ServerWebSocket<WsData>, message: string | Uint8Array) {
@@ -54,19 +57,32 @@ export const websocketHandlers = {
                     emitGenericEvent(obj);
                 }
             } else if (t === 'done') {
+                const full = typeof inflight.lastText === 'string' ? inflight.lastText : '';
+
+                // Emit OpenAI-like “done” chain
+                emitOutputTextDone(full);
+                emitContentPartDone(full);
+                emitOutputItemDone(full);
+
                 emitResponseCompleted('completed');
-                inflightClose(null, '[DONE]');
+                inflightTerminate(null, null);
                 return;
             } else if (t === 'closed') {
-                // treat as completion if we didn't get done
-                emitResponseCompleted('completed', { reason: 'stream_closed' });
-                inflightClose(null, '[DONE]');
+                const full = typeof inflight.lastText === 'string' ? inflight.lastText : '';
+
+                emitOutputTextDone(full);
+                emitContentPartDone(full);
+                emitOutputItemDone(full);
+
+                emitResponseCompleted('completed', {reason: 'stream_closed'});
+                inflightTerminate(null, null);
                 return;
             } else if (t === 'error') {
-                emitResponseCompleted('error', { reason: 'extension_error' });
-                inflightClose('response.error', {
+                emitResponseCompleted('error', {reason: 'extension_error'});
+
+                inflightTerminate('response.error', {
                     type: 'response.error',
-                    error: { message: 'Extension reported error', detail: obj },
+                    error: {message: 'Extension reported error', detail: obj},
                 });
                 return;
             } else {
@@ -79,36 +95,12 @@ export const websocketHandlers = {
     },
 
     close(ws: ServerWebSocket<WsData>) {
-        // Note: checking if ws === soleClient needs careful typing or comparison
-        // But here we can just check if getSoleClient() matches
-        // For simplicity, we just clear it if it matches? 
-        // Or we can just leave it since setSoleClient handles overwrites.
-        // The original code did: if (soleClient === (ws as any)) soleClient = null;
-        
-        // We need to import getSoleClient to check
-        // but importing hub here creates circular dependency? 
-        // hub -> ?
-        // handler -> hub (yes)
-        // hub doesn't import handler. So it is fine.
-        
-        // We didn't export getSoleClient in hub.ts in my previous step? 
-        // Checking hub.ts content... I did export getSoleClient.
-
-        // However, ws here is ServerWebSocket<WsData>, soleClient is WebSocket.
-        // They are compatible in Bun usually but types might mismatch.
-        
-        // Let's just null it out if we can confirm it's the same object reference.
-        // Since we cast it when setting, we might need to cast to check.
-        // Actually, let's just leave it or rely on setSoleClient to overwrite. 
-        // But for safety let's implement the check.
-        
-        // If the WS closes mid-flight, end the HTTP stream in OpenAI style.
         const inflight = getInflight();
         if (inflight) {
-            emitResponseCompleted('error', { error: 'WebSocket closed' });
-            inflightClose('response.error', {
+            emitResponseCompleted('error', {error: 'WebSocket closed'});
+            inflightTerminate('response.error', {
                 type: 'response.error',
-                error: { message: 'WebSocket closed' },
+                error: {message: 'WebSocket closed'},
             });
         }
     },

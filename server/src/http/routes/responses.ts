@@ -2,9 +2,12 @@ import {getSoleClient, sendToSoleClient} from '../../ws/hub';
 import {
     getInflight,
     createInflight,
-    inflightClose,
+    inflightTerminate,
     emitResponseCompleted,
     emitResponseCreated,
+    emitResponseInProgress,
+    emitOutputItemAdded,
+    emitContentPartAdded,
 } from '../responses/inflight';
 import {sseResponseHeaders} from '../responses/sse';
 
@@ -115,7 +118,6 @@ export async function handlePostResponses(
             headers: {...cors, 'Content-Type': 'application/json'},
         });
     }
-    console.log('>>>', body);
 
     const prompt = extractUserPromptFromResponsesBody(body);
     if (!prompt) {
@@ -129,83 +131,111 @@ export async function handlePostResponses(
             }
         );
     }
-    console.log(prompt);
 
     const id = `resp_${crypto.randomUUID()}`;
-    const created = Math.floor(Date.now() / 1000);
+    const createdAt = Math.floor(Date.now() / 1000);
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
             const timeoutHandle = setTimeout(() => {
-                // timeout as OpenAI-like error + completed + DONE
+                // Timeout: emit error completion + terminate
                 if (!getInflight()) return;
+
                 emitResponseCompleted('error', {
                     error: 'Timed out waiting for extension SSE',
                 });
-                inflightClose('response.error', {
+
+                inflightTerminate('response.error', {
                     type: 'response.error',
                     error: {message: 'Timed out waiting for extension SSE'},
+                    // NOTE: sequence_number is attached in inflightTerminate caller only if you pass it;
+                    // we keep it simple here and rely on the completed event.
                 });
             }, 60_000);
 
-            const outputTextItemId = `item_${crypto.randomUUID()}`;
+            const messageItemId = `msg_${crypto.randomUUID()}`;
 
-            // Minimal OpenAI Responses "response" object
-            const responseObj = {
+            // OpenAI Responses-like response object (minimal-but-shaped like OpenAI)
+            const responseObj: any = {
                 id,
-                object: 'response' as const,
-                created,
-                status: 'in_progress' as const,
-                // Best-effort, since we don't know the model slug reliably here
-                model: null,
-                // Provide request input for traceability
-                input: prompt,
-                // Provide a minimal output scaffold
-                output: [
-                    {
-                        id: outputTextItemId,
-                        object: 'output_text' as const,
-                        content: [],
-                    },
-                ],
+                object: 'response',
+                created_at: createdAt,
+                status: 'in_progress',
+                background: false,
+                completed_at: null,
+                error: null,
+
+                // Echo requested model if provided (best-effort)
+                model: typeof body?.model === 'string' ? body.model : null,
+
+                // OpenAI includes many tuning fields; we can default them.
+                frequency_penalty: 0.0,
+                presence_penalty: 0.0,
+                temperature: typeof body?.temperature === 'number' ? body.temperature : 1.0,
+                top_p: typeof body?.top_p === 'number' ? body.top_p : 1.0,
+                truncation: 'disabled',
+
+                // Tools fields (not used here)
+                tools: Array.isArray(body?.tools) ? body.tools : [],
+                tool_choice: body?.tool_choice ?? 'auto',
+                parallel_tool_calls: true,
+
+                // Output collection, starts empty
+                output: [],
+
+                // Convenience snapshot
                 output_text: '',
+
+                // Provide request input for traceability (your existing behavior)
+                input: prompt,
+
+                // OpenAI returns usage at the end; we cannot compute token counts reliably here.
+                usage: null,
+
+                metadata: {},
+                meta: {},
             };
 
             createInflight({
                 id,
-                created,
+                createdAt,
                 controller,
                 encoder,
                 response: responseObj,
-                outputTextItemId,
+                messageItemId,
                 timeoutHandle,
             });
 
             // Send prompt to extension
-            const ok = sendToSoleClient({type: 'prompt', id, created, input: prompt});
+            const ok = sendToSoleClient({type: 'prompt', id, created: createdAt, input: prompt});
             if (!ok) {
                 emitResponseCompleted('error', {
                     error: 'Failed to send prompt to WS client',
                 });
-                inflightClose('response.error', {
+
+                inflightTerminate('response.error', {
                     type: 'response.error',
                     error: {message: 'Failed to send prompt to WS client'},
                 });
                 return;
             }
 
-            // OpenAI-style created event
+            // Emit OpenAI-style initial event cadence
             emitResponseCreated();
+            emitResponseInProgress();
+            emitOutputItemAdded();
+            emitContentPartAdded();
         },
 
         cancel() {
             const currentInflight = getInflight();
             if (currentInflight && currentInflight.id === id) {
                 emitResponseCompleted('cancelled', {reason: 'client_disconnected'});
-                inflightClose('response.cancelled', {
+                inflightTerminate('response.cancelled', {
                     type: 'response.cancelled',
                     response_id: id,
+                    error: {message: 'Client disconnected'},
                 });
             }
         },
