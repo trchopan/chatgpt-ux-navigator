@@ -12,7 +12,6 @@
 
         STORAGE_KEY_HIDDEN: 'cgpt_nav_hidden',
         STORAGE_KEY_SERVER_URL: 'cgpt_nav_server_url',
-        STORAGE_KEY_WS_ENABLED: 'cgpt_nav_ws_enabled',
 
         ROLE_SEL: '[data-message-author-role="user"], [data-message-author-role="assistant"]',
         TURN_SEL: '[data-testid="conversation-turn"]',

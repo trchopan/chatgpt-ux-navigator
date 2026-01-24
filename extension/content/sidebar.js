@@ -420,6 +420,21 @@
         });
 
         // WebSocket mode toggle (per-tab UI, persisted preference)
+        function updateWsUiState(enabled) {
+            const root = rootEl();
+            if (!root) return;
+
+            const promptsEl = document.getElementById('cgpt-nav-prompts');
+            const filtersEl = root.querySelector('.filters');
+            const listEl = document.getElementById('cgpt-nav-list');
+
+            const displayStyle = enabled ? 'none' : '';
+
+            if (promptsEl) promptsEl.style.display = displayStyle;
+            if (filtersEl) filtersEl.style.display = displayStyle;
+            if (listEl) listEl.style.display = displayStyle;
+        }
+
         function syncWsToggleButton(on) {
             const btn = document.getElementById('cgpt-nav-ws-toggle');
             if (!btn) return;
@@ -440,6 +455,7 @@
             } catch (_) {}
 
             syncWsToggleButton(isWsEnabled);
+            updateWsUiState(isWsEnabled);
         });
 
         // Save last assistant response
@@ -470,6 +486,12 @@
 
             alert('Response saved');
         });
+
+        // Initialize WS UI state
+        syncWsToggleButton(isWsEnabled);
+        updateWsUiState(isWsEnabled);
+        // Ensure streamTap matches state
+        if (isWsEnabled) window.CGPT_NAV.streamTap?.enable?.();
     }
 
     function ensureUi() {
