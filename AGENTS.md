@@ -28,14 +28,16 @@ This file provides context and guidelines for AI agents working on this codebase
 
 - **Tech**: TypeScript, [Bun](https://bun.sh).
 - **Build**: No transpilation needed for development; Bun runs TS natively.
-- **Entry Point**: `index.ts`.
+- **Entry Point**: `src/index.ts`.
 - **Key Logic**:
-    - **Prompt Parsing**: Reads `.md` files and resolves `@path` (single file), `@@path` (dir content), and directory trees.
-    - **Thread Parsing**: Splits prompts into `# {{USER}}` and `# {{ASSISTANT}}` blocks.
+    - **Prompt Parsing**: Reads `.md` files and resolves `@path` (single file), `@@path` (dir content), and directory trees. Located in `src/prompts/buildPrompt.ts`.
+    - **Thread Parsing**: Splits prompts into `# {{USER}}` and `# {{ASSISTANT}}` blocks. Located in `src/prompts/thread.ts`.
     - **API**:
         - `GET /list`: Lists available prompt files.
         - `GET /prompt/:filename`: Returns processed prompt content.
         - `POST /prompt/:filename`: Appends assistant response to the file.
+        - `POST /responses`: Pushes user prompt to extension via WebSocket (supports SSE streaming).
+        - `GET /ws`: WebSocket endpoint for extension communication.
 
 ## Development Workflow
 
@@ -47,9 +49,13 @@ This file provides context and guidelines for AI agents working on this codebase
 
 ### Server
 
-- **Running**: `cd server && bun run index.ts`
+- **Running**: `cd server && bun run src/index.ts`
 - **Dependencies**: managed via `bun install`.
-- **Logic**: The server logic is contained entirely within `server/index.ts` for simplicity. If it grows, refactor into modules.
+- **Structure**:
+    - `src/http/`: Server setup (`server.ts`), routing (`router.ts`), and route handlers (`routes/`).
+    - `src/prompts/`: Core logic for parsing and building prompts.
+    - `src/fs/`: File system utilities and security checks.
+    - `src/ws/`: WebSocket logic.
 
 ## Code Conventions
 
@@ -58,12 +64,15 @@ This file provides context and guidelines for AI agents working on this codebase
     - Avoid external libraries in the extension unless absolutely necessary to keep it lightweight and reviewable.
     - Use `document.querySelector` robustly as ChatGPT's DOM classes are obfuscated/dynamic. Prefer selector strategies that are less likely to break (e.g., `[data-message-author-role]`).
 - **Server**:
-    - Use Bun native APIs (`Bun.file`, `Bun.write`, `Bun.serve`) over Node.js `fs` where possible (though `node:path` and `node:fs/promises` are used for compatibility/specific needs).
-    - Keep it simple. It's a single-file server for now.
+    - **Modular & Declarative**: Prefer declarative code styles. The server uses a `Router` class for clear route definitions.
+    - **Native APIs**: Use Bun native APIs (`Bun.file`, `Bun.write`, `Bun.serve`) over Node.js `fs` where possible.
+    - **Formatting**: Code should be easy to read and documented where necessary.
 
 ## Common Tasks for Agents
 
 - **"Fix the sidebar not appearing"**: Check `extension/content/bootstrap.js` or `observer.js`. The ChatGPT DOM might have changed.
-- **"Add a new feature to the server"**: Modify `server/index.ts`. Remember to handle CORS headers manually as done in the existing `fetch` handler.
-- **"Improve prompt parsing"**: Look at `buildPrompt` in `server/index.ts`. This handles the `@` syntax.
+- **"Add a new feature to the server"**:
+    1.  Create a new handler in `server/src/http/routes/`.
+    2.  Register it in `server/src/http/server.ts` using the router.
+- **"Improve prompt parsing"**: Modify `server/src/prompts/buildPrompt.ts`. This handles the `@` syntax.
 - **"Update extension styling"**: Check `extension/styles.css`. Ensure z-indices are high enough to sit above ChatGPT's UI but not block critical modals.

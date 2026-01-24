@@ -7,5 +7,5 @@ export function corsHeaders(): Record<string, string> {
 }
 
 export function handleOptions(): Response {
-    return new Response(null, { status: 204, headers: corsHeaders() });
+    return new Response(null, {status: 204, headers: corsHeaders()});
 }

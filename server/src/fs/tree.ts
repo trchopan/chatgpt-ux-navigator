@@ -1,14 +1,28 @@
-import { join } from 'node:path';
-import { readdir, stat } from 'node:fs/promises';
-import { SKIP_DIR_NAMES } from './constants';
-import type { TreeNode } from '../types/prompts';
+import {join} from 'node:path';
+import {readdir, stat} from 'node:fs/promises';
+import {SKIP_DIR_NAMES} from './constants';
+import type {TreeNode} from '../types/prompts';
+
+/**
+ * Formats a file's content for inclusion in the prompt.
+ */
+export function formatFileContent(rawFilePath: string, content: string): string[] {
+    return [
+        `**File:** ${rawFilePath}`,
+        '',
+        '```',
+        content.replace(/\r\n/g, '\n').trimEnd(),
+        '```',
+        '',
+    ];
+}
 
 export async function concatFirstLevelFiles(absDir: string, rawDirPath: string): Promise<string[]> {
     const out: string[] = [];
 
     let names: string[];
     try {
-        names = await readdir(absDir, { encoding: 'utf8' });
+        names = await readdir(absDir, {encoding: 'utf8'});
     } catch {
         return [`[ERROR: Unable to read directory: ${absDir}]`];
     }
@@ -38,23 +52,21 @@ export async function concatFirstLevelFiles(absDir: string, rawDirPath: string):
             content = `[ERROR: Unable to read file: ${full}]`;
         }
 
-        out.push(`**File:** ${rawFilePath}`);
-        out.push('');
-        out.push('```');
-        out.push(content.replace(/\r\n/g, '\n').trimEnd());
-        out.push('```');
-        out.push('');
+        out.push(...formatFileContent(rawFilePath, content));
     }
 
     return out;
 }
 
-export async function listPathsRecursive(absDir: string, baseDir: string = absDir): Promise<TreeNode[]> {
+export async function listPathsRecursive(
+    absDir: string,
+    baseDir: string = absDir
+): Promise<TreeNode[]> {
     const out: TreeNode[] = [];
 
     let names: string[];
     try {
-        names = await readdir(absDir, { encoding: 'utf8' });
+        names = await readdir(absDir, {encoding: 'utf8'});
     } catch {
         return out;
     }
@@ -74,9 +86,9 @@ export async function listPathsRecursive(absDir: string, baseDir: string = absDi
         if (st.isDirectory()) {
             if (SKIP_DIR_NAMES.has(name)) continue;
             const children = await listPathsRecursive(full, baseDir);
-            out.push({ name, type: 'directory', children });
+            out.push({name, type: 'directory', children});
         } else if (st.isFile()) {
-            out.push({ name, type: 'file' });
+            out.push({name, type: 'file'});
         }
     }
 

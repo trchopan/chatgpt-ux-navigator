@@ -10,7 +10,7 @@ export function sseFrame(event: string | null, data: any): string {
     try {
         dataStr = typeof data === 'string' ? data : JSON.stringify(data);
     } catch {
-        dataStr = JSON.stringify({ type: 'error', error: 'Could not stringify SSE payload' });
+        dataStr = JSON.stringify({type: 'error', error: 'Could not stringify SSE payload'});
     }
 
     // SSE requires each line be prefixed with "data:"

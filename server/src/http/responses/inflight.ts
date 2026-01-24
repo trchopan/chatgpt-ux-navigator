@@ -128,7 +128,9 @@ export function inflightTerminate(finalEvent: string | null = null, finalData: a
         // Best-effort final event (errors typically)
         if (finalEvent && finalData != null) {
             try {
-                inflight.controller?.enqueue(inflight.encoder!.encode(sseFrame(finalEvent, finalData)));
+                inflight.controller?.enqueue(
+                    inflight.encoder!.encode(sseFrame(finalEvent, finalData))
+                );
             } catch {}
         }
 

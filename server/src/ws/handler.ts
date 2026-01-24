@@ -14,8 +14,6 @@ import {
     emitGenericEvent,
 } from '../http/responses/inflight';
 
-
-
 export const websocketHandlers = {
     open(ws: ServerWebSocket<WsData>) {
         // Single-client assumption: newest connection wins.

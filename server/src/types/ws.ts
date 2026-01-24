@@ -1,4 +1,4 @@
-export type WsData = { id: string };
+export type WsData = {id: string};
 
 export type ChatGPTStreamMeta = {
     url: string;

@@ -1,16 +1,17 @@
 {
-  "name": "server",
-  "module": "src/index.ts",
-  "scripts": {
-    "start": "bun run src/index.ts",
-    "test": "bun test"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "private": true,
-  "type": "module"
+    "name": "server",
+    "module": "src/index.ts",
+    "scripts": {
+        "start": "bun run src/index.ts",
+        "test": "bun test",
+        "format": "prettier --write ."
+    },
+    "devDependencies": {
+        "@types/bun": "latest"
+    },
+    "peerDependencies": {
+        "typescript": "^5"
+    },
+    "private": true,
+    "type": "module"
 }

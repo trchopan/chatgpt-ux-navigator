@@ -1,4 +1,4 @@
-import type { IncomingWebSocketMessage } from '../types/ws';
+import type {IncomingWebSocketMessage} from '../types/ws';
 
 export function safeParseJson(text: string): IncomingWebSocketMessage | null {
     try {

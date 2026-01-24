@@ -90,7 +90,7 @@ describe('POST /responses', () => {
         expect(body.status).toBe('completed');
 
         expect(mockSend).toHaveBeenCalled();
-		// @ts-ignore
+        // @ts-ignore
         expect(sentMessage).toContain('Hello JSON');
     });
 
@@ -114,7 +114,7 @@ describe('POST /responses', () => {
 
         // Ensure prompt was sent to WS
         expect(mockSend).toHaveBeenCalled();
-		// @ts-ignore
+        // @ts-ignore
         expect(sentMessage).toContain('Hello Stream');
 
         // Validate stream content
