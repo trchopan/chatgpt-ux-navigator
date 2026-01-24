@@ -1,4 +1,3 @@
-// OpenAI-ish "response" object shape (minimal)
 export type ResponseObject = {
     id: string;
     object: 'response';
@@ -7,13 +6,14 @@ export type ResponseObject = {
     status: 'in_progress' | 'completed' | 'cancelled' | 'error';
     model: string | null;
 
-    // We keep this as a convenience for debugging (not OpenAI exact)
-    input: any;
-
-    output: Array<any>;
+    output: any[];
     output_text: string;
 
     usage: any | null;
+
+    // Not strictly OpenAI, but useful in your local bridge
+    input: any;
+
     meta?: any;
     metadata?: any;
 };

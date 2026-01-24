@@ -1,3 +1,4 @@
+import type {AppConfig} from '../../config/config';
 import {getSoleClient, sendToSoleClient} from '../../ws/hub';
 import {
     getInflight,
@@ -89,7 +90,8 @@ function extractUserPromptFromResponsesBody(body: any): string | null {
 }
 export async function handlePostResponses(
     req: Request,
-    cors: Record<string, string>
+    cors: Record<string, string>,
+    cfg: AppConfig
 ): Promise<Response> {
     const inflight = getInflight();
     if (inflight) {
@@ -118,6 +120,11 @@ export async function handlePostResponses(
             headers: {...cors, 'Content-Type': 'application/json'},
         });
     }
+    console.log('[responses] request:', {
+        model: body?.model,
+        stream: body?.stream,
+        noStream: cfg.noStream,
+    });
 
     const prompt = extractUserPromptFromResponsesBody(body);
     if (!prompt) {
@@ -132,117 +139,211 @@ export async function handlePostResponses(
         );
     }
 
+    // OpenAI default: stream is false unless explicitly true.
+    const requestedStream = body?.stream === true;
+    const shouldStream = requestedStream && !cfg.noStream;
+
     const id = `resp_${crypto.randomUUID()}`;
     const createdAt = Math.floor(Date.now() / 1000);
-    const encoder = new TextEncoder();
+    const messageItemId = `msg_${crypto.randomUUID()}`;
 
-    const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-            const timeoutHandle = setTimeout(() => {
-                // Timeout: emit error completion + terminate
-                if (!getInflight()) return;
+    // Minimal-but-shaped like OpenAI's Responses response object
+    // (You can add more fields later; this is enough for format + client compatibility.)
+    const responseObj: any = {
+        id,
+        object: 'response',
+        created_at: createdAt,
+        status: 'in_progress',
+        background: false,
+        billing: {payer: 'developer'}, // OpenAI includes billing in some responses
+        completed_at: null,
+        error: null,
 
-                emitResponseCompleted('error', {
-                    error: 'Timed out waiting for extension SSE',
+        frequency_penalty: 0.0,
+        incomplete_details: null,
+        instructions: null,
+        max_output_tokens: null,
+        max_tool_calls: null,
+
+        model: typeof body?.model === 'string' ? body.model : null,
+
+        output: [],
+        parallel_tool_calls: true,
+
+        presence_penalty: 0.0,
+        previous_response_id: null,
+        prompt_cache_key: null,
+        prompt_cache_retention: null,
+
+        reasoning: {effort: 'none', summary: null},
+        safety_identifier: null,
+        service_tier: 'default',
+        store: true,
+
+        temperature: typeof body?.temperature === 'number' ? body.temperature : 1.0,
+        text: {format: {type: 'text'}, verbosity: 'medium'},
+
+        tool_choice: body?.tool_choice ?? 'auto',
+        tools: Array.isArray(body?.tools) ? body.tools : [],
+        top_logprobs: 0,
+        top_p: typeof body?.top_p === 'number' ? body.top_p : 1.0,
+        truncation: 'disabled',
+
+        usage: null,
+        user: null,
+        metadata: {},
+
+        // Convenience snapshot you already expose
+        output_text: '',
+
+        // Keep request input for traceability (not OpenAI exact, but helpful)
+        input: prompt,
+
+        meta: {},
+    };
+
+    // Shared timeout setup
+    const timeoutMs = 60_000;
+
+    if (shouldStream) {
+        const encoder = new TextEncoder();
+
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                const timeoutHandle = setTimeout(() => {
+                    if (!getInflight()) return;
+
+                    emitResponseCompleted('error', {
+                        error: 'Timed out waiting for extension SSE',
+                    });
+
+                    inflightTerminate('response.error', {
+                        type: 'response.error',
+                        error: {message: 'Timed out waiting for extension SSE'},
+                    });
+                }, timeoutMs);
+
+                createInflight({
+                    id,
+                    createdAt,
+                    mode: 'stream',
+                    controller,
+                    encoder,
+                    timeoutHandle,
+                    response: responseObj,
+                    messageItemId,
                 });
 
-                inflightTerminate('response.error', {
-                    type: 'response.error',
-                    error: {message: 'Timed out waiting for extension SSE'},
-                    // NOTE: sequence_number is attached in inflightTerminate caller only if you pass it;
-                    // we keep it simple here and rely on the completed event.
+                const ok = sendToSoleClient({
+                    type: 'prompt',
+                    id,
+                    created: createdAt,
+                    input: prompt,
                 });
-            }, 60_000);
+                if (!ok) {
+                    emitResponseCompleted('error', {
+                        error: 'Failed to send prompt to WS client',
+                    });
 
-            const messageItemId = `msg_${crypto.randomUUID()}`;
-
-            // OpenAI Responses-like response object (minimal-but-shaped like OpenAI)
-            const responseObj: any = {
-                id,
-                object: 'response',
-                created_at: createdAt,
-                status: 'in_progress',
-                background: false,
-                completed_at: null,
-                error: null,
-
-                // Echo requested model if provided (best-effort)
-                model: typeof body?.model === 'string' ? body.model : null,
-
-                // OpenAI includes many tuning fields; we can default them.
-                frequency_penalty: 0.0,
-                presence_penalty: 0.0,
-                temperature: typeof body?.temperature === 'number' ? body.temperature : 1.0,
-                top_p: typeof body?.top_p === 'number' ? body.top_p : 1.0,
-                truncation: 'disabled',
-
-                // Tools fields (not used here)
-                tools: Array.isArray(body?.tools) ? body.tools : [],
-                tool_choice: body?.tool_choice ?? 'auto',
-                parallel_tool_calls: true,
-
-                // Output collection, starts empty
-                output: [],
-
-                // Convenience snapshot
-                output_text: '',
-
-                // Provide request input for traceability (your existing behavior)
-                input: prompt,
-
-                // OpenAI returns usage at the end; we cannot compute token counts reliably here.
-                usage: null,
-
-                metadata: {},
-                meta: {},
-            };
-
-            createInflight({
-                id,
-                createdAt,
-                controller,
-                encoder,
-                response: responseObj,
-                messageItemId,
-                timeoutHandle,
-            });
-
-            // Send prompt to extension
-            const ok = sendToSoleClient({type: 'prompt', id, created: createdAt, input: prompt});
-            if (!ok) {
-                emitResponseCompleted('error', {
-                    error: 'Failed to send prompt to WS client',
+                    inflightTerminate('response.error', {
+                        type: 'response.error',
+                        error: {message: 'Failed to send prompt to WS client'},
+                    });
+                    return;
+                }
+                console.log('[responses] sent prompt to WS client:', {
+                    id,
+                    createdAt,
+                    promptLen: prompt.length,
                 });
 
-                inflightTerminate('response.error', {
-                    type: 'response.error',
-                    error: {message: 'Failed to send prompt to WS client'},
-                });
-                return;
+                emitResponseCreated();
+                emitResponseInProgress();
+                emitOutputItemAdded();
+                emitContentPartAdded();
+            },
+
+            cancel() {
+                const currentInflight = getInflight();
+                if (currentInflight && currentInflight.id === id) {
+                    emitResponseCompleted('cancelled', {reason: 'client_disconnected'});
+                    inflightTerminate('response.cancelled', {
+                        type: 'response.cancelled',
+                        response_id: id,
+                        error: {message: 'Client disconnected'},
+                    });
+                }
+            },
+        });
+
+        return new Response(stream, {
+            status: 200,
+            headers: sseResponseHeaders(cors),
+        });
+    }
+
+    // ----------------------------
+    // Non-stream (JSON) mode
+    // ----------------------------
+    const result = await new Promise<any>((resolve, reject) => {
+        const timeoutHandle = setTimeout(() => {
+            // Timeout: finalize as error and resolve (OpenAI returns error object differently,
+            // but we keep it consistent with our response shape)
+            const current = getInflight();
+            if (current && current.id === id) {
+                emitResponseCompleted('error', {error: 'Timed out waiting for extension SSE'});
+                inflightTerminate(null, null);
             }
 
-            // Emit OpenAI-style initial event cadence
-            emitResponseCreated();
-            emitResponseInProgress();
-            emitOutputItemAdded();
-            emitContentPartAdded();
-        },
+            reject(new Error('Timed out waiting for completion'));
+        }, timeoutMs);
 
-        cancel() {
-            const currentInflight = getInflight();
-            if (currentInflight && currentInflight.id === id) {
-                emitResponseCompleted('cancelled', {reason: 'client_disconnected'});
-                inflightTerminate('response.cancelled', {
-                    type: 'response.cancelled',
-                    response_id: id,
-                    error: {message: 'Client disconnected'},
-                });
-            }
-        },
+        createInflight({
+            id,
+            createdAt,
+            mode: 'json',
+            controller: null,
+            encoder: null,
+            timeoutHandle,
+            response: responseObj,
+            messageItemId,
+            jsonResolve: resolve,
+            jsonReject: reject,
+        });
+
+        const ok = sendToSoleClient({type: 'prompt', id, created: createdAt, input: prompt});
+        if (!ok) {
+            // Resolve immediately as error-like response
+            emitResponseCompleted('error', {error: 'Failed to send prompt to WS client'});
+            inflightTerminate(null, null);
+            reject(new Error('Failed to send prompt to WS client'));
+            return;
+        }
+        console.log('[responses] sent prompt to WS client:', {
+            id,
+            createdAt,
+            promptLen: prompt.length,
+        });
+
+        // Maintain same internal state transitions for correctness,
+        // even though no SSE is emitted.
+        emitResponseCreated();
+        emitResponseInProgress();
+        emitOutputItemAdded();
+        emitContentPartAdded();
+    }).catch(err => {
+        // If we failed before completion, produce a consistent JSON error response
+        const message = String((err as any)?.message || err || 'Unknown error');
+        return {
+            ...responseObj,
+            status: 'error',
+            completed_at: Math.floor(Date.now() / 1000),
+            error: {message},
+        };
     });
 
-    return new Response(stream, {
+    return new Response(JSON.stringify(result, null, 2), {
         status: 200,
-        headers: sseResponseHeaders(cors),
+        headers: {...cors, 'Content-Type': 'application/json; charset=utf-8'},
     });
 }

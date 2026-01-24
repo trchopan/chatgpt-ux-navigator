@@ -1,10 +1,10 @@
-import { type AppConfig } from '../config/config';
-import { corsHeaders, handleOptions } from './cors';
-import { handleIndex } from './routes/indexRoute';
-import { handleListPrompts, handleGetPrompt, handlePostPrompt } from './routes/prompts';
-import { handlePostResponses } from './routes/responses';
-import { websocketHandlers } from '../ws/handler';
-import type { WsData } from '../types/ws';
+import {type AppConfig} from '../config/config';
+import {corsHeaders, handleOptions} from './cors';
+import {handleIndex} from './routes/indexRoute';
+import {handleListPrompts, handleGetPrompt, handlePostPrompt} from './routes/prompts';
+import {handlePostResponses} from './routes/responses';
+import {websocketHandlers} from '../ws/handler';
+import type {WsData} from '../types/ws';
 
 export function startServer(cfg: AppConfig): void {
     Bun.serve<WsData>({
@@ -17,11 +17,11 @@ export function startServer(cfg: AppConfig): void {
             // WebSocket upgrade endpoint
             if (req.method === 'GET' && url.pathname === '/ws') {
                 const ok = server.upgrade(req, {
-                    data: { id: crypto.randomUUID() },
+                    data: {id: crypto.randomUUID()},
                 });
                 return ok
-                    ? new Response(null, { status: 101 })
-                    : new Response('Upgrade failed', { status: 400 });
+                    ? new Response(null, {status: 101})
+                    : new Response('Upgrade failed', {status: 400});
             }
 
             if (req.method === 'OPTIONS') {
@@ -30,7 +30,7 @@ export function startServer(cfg: AppConfig): void {
 
             // OpenAI-ish endpoint: POST /responses
             if (req.method === 'POST' && url.pathname === '/responses') {
-                return handlePostResponses(req, cors);
+                return handlePostResponses(req, cors, cfg);
             }
 
             if (req.method === 'GET' && url.pathname === '/list') {
@@ -51,7 +51,7 @@ export function startServer(cfg: AppConfig): void {
 
             return new Response('Not Found', {
                 status: 404,
-                headers: { ...cors, 'Content-Type': 'text/plain; charset=utf-8' },
+                headers: {...cors, 'Content-Type': 'text/plain; charset=utf-8'},
             });
         },
 
