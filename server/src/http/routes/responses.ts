@@ -120,11 +120,6 @@ export async function handlePostResponses(
             headers: {...cors, 'Content-Type': 'application/json'},
         });
     }
-    console.log('[responses] request:', {
-        model: body?.model,
-        stream: body?.stream,
-        noStream: cfg.noStream,
-    });
 
     const prompt = extractUserPromptFromResponsesBody(body);
     if (!prompt) {
@@ -251,11 +246,6 @@ export async function handlePostResponses(
                     });
                     return;
                 }
-                console.log('[responses] sent prompt to WS client:', {
-                    id,
-                    createdAt,
-                    promptLen: prompt.length,
-                });
 
                 emitResponseCreated();
                 emitResponseInProgress();
@@ -319,11 +309,6 @@ export async function handlePostResponses(
             reject(new Error('Failed to send prompt to WS client'));
             return;
         }
-        console.log('[responses] sent prompt to WS client:', {
-            id,
-            createdAt,
-            promptLen: prompt.length,
-        });
 
         // Maintain same internal state transitions for correctness,
         // even though no SSE is emitted.
