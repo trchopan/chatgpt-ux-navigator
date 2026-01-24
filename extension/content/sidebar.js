@@ -9,6 +9,7 @@
     let selectedFilename = null;
     let activeId = null;
     let selectedCodeId = null;
+    let isWsEnabled = false;
 
     // --- Prompt section state
     /** @type {{filename:string, at:number, threadMessages:{role:'user'|'assistant', content:string}[]} | null} */
@@ -218,7 +219,7 @@
         <div class="title">Navigator</div>
 
         <div class="controls">
-			<button id="cgpt-nav-ws-toggle" title="Toggle WebSocket mode">🔌🟢</button>
+			<button id="cgpt-nav-ws-toggle" title="Toggle WebSocket mode">🔌❌</button>
 			<button id="cgpt-nav-new-temp-chat" title="New temporary chat">🆕</button>
             <button id="cgpt-nav-save-response" title="Save response">💾</button>
             <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
@@ -419,32 +420,26 @@
         });
 
         // WebSocket mode toggle (per-tab UI, persisted preference)
-        function syncWsToggleButton() {
+        function syncWsToggleButton(on) {
             const btn = document.getElementById('cgpt-nav-ws-toggle');
             if (!btn) return;
 
-            const on = !!store?.isWsEnabled?.();
-			btn.textContent = on ? '🔌🟢' : '🔌❌';
+            btn.textContent = on ? '🔌🟢' : '🔌❌';
             btn.title = on
                 ? 'WebSocket mode is ON (connected / streaming enabled)'
                 : 'WebSocket mode is OFF (no local WS connection)';
         }
 
-        syncWsToggleButton();
-
         dom.$('#cgpt-nav-ws-toggle')?.addEventListener('click', () => {
-            const currentlyOn = !!store?.isWsEnabled?.();
-            const next = !currentlyOn;
-
-            store?.setWsEnabled?.(next);
+            isWsEnabled = !isWsEnabled;
 
             // Apply immediately in this tab
             try {
-                if (next) window.CGPT_NAV.streamTap?.enable?.();
+                if (isWsEnabled) window.CGPT_NAV.streamTap?.enable?.();
                 else window.CGPT_NAV.streamTap?.disable?.();
             } catch (_) {}
 
-            syncWsToggleButton();
+            syncWsToggleButton(isWsEnabled);
         });
 
         // Save last assistant response

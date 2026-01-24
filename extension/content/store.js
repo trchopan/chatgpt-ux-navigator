@@ -11,13 +11,5 @@
         localStorage.setItem(C.STORAGE_KEY_HIDDEN, v ? '1' : '0');
     }
 
-    function isWsEnabled() {
-        return localStorage.getItem(C.STORAGE_KEY_WS_ENABLED) === '1';
-    }
-
-    function setWsEnabled(v) {
-        localStorage.setItem(C.STORAGE_KEY_WS_ENABLED, v ? '1' : '0');
-    }
-
-    window.CGPT_NAV.store = {isHidden, setHidden, isWsEnabled, setWsEnabled};
+    window.CGPT_NAV.store = {isHidden, setHidden};
 })();
