@@ -32,6 +32,12 @@ describe("FileSystem Utils", () => {
         // and doesn't resolve ".." itself, so the caller must resolve first.
         // However, if we pass unresolved paths, we want to see behavior.
         // The implementation does simple string prefix matching.
+        it("should return false for path traversing out of root", () => {
+            // This currently fails/passes incorrectly because of simple string matching
+            // /app/data/../other/file.txt starts with /app/data/ but resolves to /app/other/file.txt
+            expect(isPathInsideRoot("/app/data/../other/file.txt", "/app/data")).toBe(false);
+        });
+
         it("should be careful with string prefix matching", () => {
              // /app/database starts with /app/data but is not inside it
              expect(isPathInsideRoot("/app/database", "/app/data")).toBe(false);

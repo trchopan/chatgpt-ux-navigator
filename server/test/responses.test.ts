@@ -166,4 +166,38 @@ describe('POST /responses', () => {
         expect(capturedInput).toContain('# REQUEST');
         expect(capturedInput).toContain('Usr');
     });
+
+    it('should return 409 if another request is in-flight', async () => {
+        // 1. Setup a client that receives but doesn't immediately finish
+        setSoleClient({send: () => {}} as any);
+
+        // 2. Start the first request (it will hang waiting for WS response)
+        const req1 = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Req 1'}),
+        });
+
+        // Start it but don't await the result yet (it waits for timeout or completion)
+        const p1 = handlePostResponses(req1, corsHeaders, config);
+
+        // Allow microtask queue to process so inflight is set
+        await new Promise(r => setTimeout(r, 10));
+
+        // 3. Start second request
+        const req2 = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Req 2'}),
+        });
+
+        const res2 = await handlePostResponses(req2, corsHeaders, config);
+        expect(res2.status).toBe(409);
+
+        // Cleanup: terminate inflight to let p1 resolve (as error or completed)
+        inflightTerminate(null, null);
+        try {
+            await p1;
+        } catch (e) {
+            // Expected error or resolved error object
+        }
+    });
 });
