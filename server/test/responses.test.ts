@@ -1,5 +1,5 @@
 import {describe, it, expect, beforeEach, afterEach, mock} from 'bun:test';
-import {handlePostResponses} from '../src/http/routes/responses';
+import {handlePostResponses, handlePostResponsesNew} from '../src/http/routes/responses';
 import type {AppConfig} from '../src/config/config';
 import {setSoleClient} from '../src/ws/hub';
 import {
@@ -88,8 +88,9 @@ describe('POST /responses', () => {
         expect(body.status).toBe('completed');
 
         expect(mockSend).toHaveBeenCalled();
-        // @ts-ignore
-        expect(sentMessage).toContain('Hello JSON');
+        const parsed = JSON.parse(String(sentMessage));
+        expect(parsed.type).toBe('prompt');
+        expect(parsed.input).toContain('Hello JSON');
     });
 
     it('should handle Stream mode (SSE)', async () => {
@@ -137,8 +138,28 @@ describe('POST /responses', () => {
         }
     });
 
+    it('should request a temporary chat for POST /responses/new', async () => {
+        let parsed: any = null;
+        const mockSend = mock((msg: string) => {
+            parsed = JSON.parse(msg);
+            emitResponseCompleted('completed');
+            inflightTerminate();
+        });
+        setSoleClient({send: mockSend} as any);
+
+        const req = new Request('http://localhost/responses/new', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Hello fresh chat'}),
+        });
+
+        const res = await handlePostResponsesNew(req, config, new URL(req.url));
+        expect(res.status).toBe(200);
+        expect(parsed?.type).toBe('prompt.new');
+        expect(parsed?.input).toContain('Hello fresh chat');
+    });
+
     it('should accept array of messages as input', async () => {
-        let capturedInput: string = '';
+        let capturedInput = '';
         const mockSend = mock((msg: string) => {
             const parsed = JSON.parse(msg);
             capturedInput = parsed.input;
@@ -152,22 +173,20 @@ describe('POST /responses', () => {
                 input: [
                     {role: 'system', content: 'Sys'},
                     {role: 'user', content: 'Usr'},
+                    {role: 'system', content: 'Ignored'},
                 ],
             }),
         });
 
         await handlePostResponses(req, config, new URL(req.url));
 
-        // Check how it formats the prompt
-        expect(capturedInput).toContain('# INSTRUCTION');
-        expect(capturedInput).toContain('Sys');
-        expect(capturedInput).toContain('# REQUEST');
-        expect(capturedInput).toContain('Usr');
+        expect(capturedInput).toBe('Usr');
+        expect(capturedInput.includes('Sys')).toBe(false);
     });
 
 
-    it('should inject tools into the prompt', async () => {
-        let capturedInput: string = '';
+    it('should ignore tool definitions in the payload', async () => {
+        let capturedInput = '';
         const mockSend = mock((msg: string) => {
             const parsed = JSON.parse(msg);
             capturedInput = parsed.input;
@@ -194,46 +213,8 @@ describe('POST /responses', () => {
 
         await handlePostResponses(req, config, new URL(req.url));
 
-        expect(capturedInput).toContain('# TOOLS');
-        expect(capturedInput).toContain('## test_tool');
-        expect(capturedInput).toContain('A test tool');
-        expect(capturedInput).toContain('# TOOL USAGE');
-        expect(capturedInput).toContain('# REQUEST');
-        expect(capturedInput).toContain('User Request');
-    });
-
-    it('should inject flattened tools into the prompt', async () => {
-        let capturedInput: string = '';
-        const mockSend = mock((msg: string) => {
-            const parsed = JSON.parse(msg);
-            capturedInput = parsed.input;
-            inflightTerminate();
-        });
-        setSoleClient({send: mockSend} as any);
-
-        const req = new Request('http://localhost/responses', {
-            method: 'POST',
-            body: JSON.stringify({
-                input: 'User Request',
-                tools: [
-                    {
-                        type: 'function',
-                        name: 'flat_tool',
-                        description: 'A flat tool',
-                        parameters: {type: 'object', properties: {bar: {type: 'string'}}},
-                    },
-                ],
-            }),
-        });
-
-        await handlePostResponses(req, config, new URL(req.url));
-
-        expect(capturedInput).toContain('# TOOLS');
-        expect(capturedInput).toContain('## flat_tool');
-        expect(capturedInput).toContain('A flat tool');
-        expect(capturedInput).toContain('# TOOL USAGE');
-        expect(capturedInput).toContain('# REQUEST');
-        expect(capturedInput).toContain('User Request');
+        expect(capturedInput).toBe('User Request');
+        expect(capturedInput.includes('test_tool')).toBe(false);
     });
 
     it('should return 409 if another request is in-flight', async () => {

@@ -1,99 +1,227 @@
 export type ExtractedTextUpdate = {mode: 'full'; text: string} | {mode: 'delta'; text: string};
 
-function partsToText(parts: any): string | null {
-    if (!Array.isArray(parts) || parts.length === 0) return null;
+function asNonEmptyString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    return value.length > 0 ? value : null;
+}
 
-    const out: string[] = [];
-    for (const p of parts) {
-        if (typeof p === 'string') {
-            if (p) out.push(p);
-            continue;
-        }
-        if (p && typeof p === 'object') {
-            if (typeof (p as any).text === 'string' && (p as any).text) out.push((p as any).text);
-            else if (typeof (p as any).content === 'string' && (p as any).content)
-                out.push((p as any).content);
+function mergeFragments(values: Array<string | null>): string | null {
+    const fragments = values.filter(Boolean) as string[];
+    return fragments.length ? fragments.join('') : null;
+}
+
+function textFromContent(parts: any): string | null {
+    if (!parts) return null;
+
+    if (typeof parts === 'string') {
+        return parts.length ? parts : null;
+    }
+
+    if (Array.isArray(parts)) {
+        const merged = mergeFragments(parts.map(textFromContent));
+        return merged;
+    }
+
+    if (typeof parts !== 'object') return null;
+
+    const directKeys = ['text', 'value', 'content', 'literal'];
+    for (const key of directKeys) {
+        const str = asNonEmptyString((parts as any)[key]);
+        if (str) return str;
+    }
+
+    const directDelta = asNonEmptyString((parts as any).delta);
+    if (directDelta) return directDelta;
+
+    const fromParts = textFromContent((parts as any).parts);
+    if (fromParts) return fromParts;
+
+    const nestedKeys = ['delta', 'content', 'arguments', 'argument', 'payload', 'body', 'data'];
+    for (const key of nestedKeys) {
+        if (key in (parts as any)) {
+            const nested = textFromContent((parts as any)[key]);
+            if (nested) return nested;
         }
     }
 
-    const joined = out.join('');
-    return joined ? joined : null;
+    if (Array.isArray((parts as any).messages)) {
+        for (const msg of (parts as any).messages) {
+            const txt = textFromMessage(msg);
+            if (txt) return txt;
+        }
+    }
+
+    if (Array.isArray((parts as any).output)) {
+        const txt = textFromContent((parts as any).output);
+        if (txt) return txt;
+    }
+
+    return null;
+}
+
+function textFromMessage(msg: any): string | null {
+    if (!msg || typeof msg !== 'object') return null;
+
+    const role = (msg.author?.role ?? msg.role ?? '').toLowerCase();
+    if (role && role !== 'assistant') return null;
+
+    const fromContent = textFromContent(msg.content);
+    if (fromContent) return fromContent;
+
+    const fromParts = textFromContent(msg.parts);
+    if (fromParts) return fromParts;
+
+    const direct = asNonEmptyString(msg.text);
+    if (direct) return direct;
+
+    return null;
+}
+
+function extractFromTypedEvent(data: any, type: string): ExtractedTextUpdate | null {
+    const normalized = type.toLowerCase();
+
+    if (normalized === 'response.output_text.delta') {
+        const delta =
+            asNonEmptyString(data.delta) ??
+            textFromContent(data.delta) ??
+            textFromContent(data.response?.delta) ??
+            textFromContent(data.response?.output_text);
+        if (delta) return {mode: 'delta', text: delta};
+    }
+
+    if (normalized === 'response.output_text.done') {
+        const full =
+            asNonEmptyString(data.text) ??
+            textFromContent(data.text) ??
+            textFromContent(data.response?.output_text) ??
+            textFromContent(data.response?.output?.[0]?.content) ??
+            textFromContent(data.output_text) ??
+            textFromContent(data.content);
+        if (full) return {mode: 'full', text: full};
+    }
+
+    if (normalized === 'response.completed') {
+        const full =
+            textFromContent(data.response?.output_text) ??
+            textFromContent(data.response?.output?.[0]?.content);
+        if (full) return {mode: 'full', text: full};
+    }
+
+    const deltaLikeTypes = [
+        'content_block_delta',
+        'message_delta',
+        'response.delta',
+        'output_text.delta',
+        '.delta',
+        'delta',
+    ];
+
+    if (deltaLikeTypes.some(t => normalized.includes(t))) {
+        const delta =
+            textFromContent(data.delta) ??
+            textFromContent(data.content) ??
+            textFromContent(data.payload) ??
+            textFromContent(data.arguments);
+        if (delta) return {mode: 'delta', text: delta};
+    }
+
+    const doneLikeTypes = ['content_block_done', 'message_done', '.done'];
+    if (doneLikeTypes.some(t => normalized.includes(t))) {
+        const full =
+            textFromContent(data.content) ??
+            textFromContent(data.full_text) ??
+            textFromContent(data.payload);
+        if (full) return {mode: 'full', text: full};
+    }
+
+    return null;
+}
+
+function extractFromStructuredPayload(data: any): ExtractedTextUpdate | null {
+    if (data == null) return null;
+
+    if (typeof data === 'string') {
+        return data.length ? {mode: 'delta', text: data} : null;
+    }
+
+    if (Array.isArray(data)) {
+        const fragments: string[] = [];
+        for (const entry of data) {
+            const nested = extractFromStructuredPayload(entry);
+            if (nested) {
+                fragments.push(nested.text);
+                continue;
+            }
+            const fallback = textFromContent(entry);
+            if (fallback) fragments.push(fallback);
+        }
+        if (fragments.length) {
+            return {mode: 'delta', text: fragments.join('')};
+        }
+        return null;
+    }
+
+    if (typeof data !== 'object') return null;
+
+    const type = typeof (data as any).type === 'string' ? (data as any).type : null;
+    if (type) {
+        const typed = extractFromTypedEvent(data, type);
+        if (typed) return typed;
+    }
+
+    if ('v' in (data as any)) {
+        const v = (data as any).v;
+        if (typeof v === 'string') {
+            return v.length ? {mode: 'delta', text: v} : null;
+        }
+        const nested = extractFromStructuredPayload(v);
+        if (nested) return nested;
+    }
+
+    const messageText = textFromMessage((data as any).message);
+    if (messageText) return {mode: 'full', text: messageText};
+
+    if (Array.isArray((data as any).messages)) {
+        for (const msg of (data as any).messages) {
+            const txt = textFromMessage(msg);
+            if (txt) return {mode: 'full', text: txt};
+        }
+    }
+
+    const contentText = textFromContent((data as any).content ?? (data as any).text);
+    if (contentText) return {mode: 'full', text: contentText};
+
+    const deltaText = textFromContent((data as any).delta);
+    if (deltaText) return {mode: 'delta', text: deltaText};
+
+    const choiceDelta = textFromContent((data as any).choices?.[0]?.delta?.content);
+    if (choiceDelta) return {mode: 'delta', text: choiceDelta};
+
+    return null;
 }
 
 /**
  * Best-effort extraction of assistant text updates from ChatGPT internal SSE payload JSON.
- *
- * IMPORTANT: ChatGPT payloads vary. In your logs, they are often wrapped in:
- *   { v: { message: { author: {role}, content: {parts: [...] } } }, c: <number> }
  */
 export function extractTextUpdateFromChatGPTPayload(obj: any): ExtractedTextUpdate | null {
-    const j = obj?.payload?.json;
-    if (!j || typeof j !== 'object') return null;
+    const payload = obj?.payload;
+    if (!payload) return null;
 
-    // ------------------------------------------------------------
-    // 0) ChatGPT compact envelope: { v: <...>, c?: ... }
-    // In your logs, v can be:
-    //   - object: { message: {...} }   (often metadata frames, including user prompt echo)
-    //   - string: " I am"             (assistant text delta fragments)
-    // ------------------------------------------------------------
-    if ('v' in (j as any)) {
-        const v = (j as any).v;
+    const fromJson = extractFromStructuredPayload(payload.json);
+    if (fromJson) return fromJson;
 
-        // Case A: v is a string => treat as a text delta fragment
-        if (typeof v === 'string' && v.length > 0) {
-            return {mode: 'delta', text: v};
-        }
-
-        // Case B: v is an object => may contain message frames (sometimes full snapshots)
-        if (v && typeof v === 'object') {
-            const msg = (v as any)?.message;
-            const role = msg?.author?.role;
-
-            // Only extract assistant output (ignore user frames)
-            if (role === 'assistant') {
-                const parts = msg?.content?.parts;
-                const t = partsToText(parts);
-                if (typeof t === 'string') {
-                    return {mode: 'full', text: t};
-                }
-
-                const t2 = msg?.content?.text;
-                if (typeof t2 === 'string' && t2) return {mode: 'full', text: t2};
+    const raw = payload.raw;
+    if (typeof raw === 'string' && raw.length > 0 && raw !== '[DONE]') {
+        if (raw.trim().startsWith('{')) {
+            try {
+                const parsed = JSON.parse(raw);
+                const nested = extractFromStructuredPayload(parsed);
+                if (nested) return nested;
+            } catch {
+                // ignore parse errors, fall back to treating raw as delta text
             }
         }
-    }
-
-    // ----------------------------
-    // FULL SNAPSHOT patterns (older / other shapes)
-    // ----------------------------
-
-    // 1) { message: { content: { parts: [...] } } }
-    {
-        const parts = (j as any)?.message?.content?.parts;
-        const t = partsToText(parts);
-        if (typeof t === 'string') return {mode: 'full', text: t};
-    }
-
-    // 2) { message: { content: { text: "..." } } }
-    {
-        const t = (j as any)?.message?.content?.text;
-        if (typeof t === 'string' && t) return {mode: 'full', text: t};
-    }
-
-    // ----------------------------
-    // DELTA-only patterns
-    // ----------------------------
-
-    // 3) { delta: "..." }
-    {
-        const d = (j as any)?.delta;
-        if (typeof d === 'string' && d) return {mode: 'delta', text: d};
-    }
-
-    // 4) OpenAI-ish delta: { choices: [{ delta: { content: "..." } }] }
-    {
-        const d = (j as any)?.choices?.[0]?.delta?.content;
-        if (typeof d === 'string' && d) return {mode: 'delta', text: d};
+        return {mode: 'delta', text: raw};
     }
 
     return null;

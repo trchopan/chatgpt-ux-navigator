@@ -44,13 +44,19 @@ The server is built with [Bun](https://bun.sh).
 ```bash
 cd server
 bun install
-bun run index.ts
+bun run src/index.ts
+```
+
+_For development with automatic restarts, use:_
+
+```bash
+bun run dev
 ```
 
 _By default, it serves markdown files from the `server/` directory. You can pass arguments to serve other folders:_
 
 ```bash
-bun run index.ts <path-to-prompts> <path-to-files-root>
+bun run src/index.ts <path-to-prompts> <path-to-files-root>
 ```
 
 ### 2. Install the Extension

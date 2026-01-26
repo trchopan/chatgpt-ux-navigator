@@ -3,6 +3,7 @@
     "module": "src/index.ts",
     "scripts": {
         "start": "bun run src/index.ts",
+        "dev": "bun run --watch src/index.ts",
         "test": "bun test",
         "format": "prettier --write ."
     },

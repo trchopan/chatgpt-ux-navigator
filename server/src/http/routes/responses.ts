@@ -14,176 +14,74 @@ import {sseResponseHeaders} from '../responses/sse';
 import {corsHeaders} from '../cors';
 
 /**
- * Renders tools into a Markdown section.
- */
-function renderTools(tools: any[], toolChoice?: any): string {
-    if (!Array.isArray(tools) || tools.length === 0) return '';
-    const lines = ['# TOOLS', '', 'You have access to the following tools:', ''];
-
-    for (const t of tools) {
-        const func = t.function || t;
-        if (t.type === 'function' && func?.name) {
-            lines.push(`## ${func.name}`);
-            lines.push('');
-            lines.push(`Function Name: \`${func.name}\``);
-            lines.push('');
-
-            if (func.description) {
-                lines.push('');
-                lines.push(`${func.description}`);
-                lines.push('');
-            }
-            lines.push('');
-            lines.push('Parameters (JSON Schema):');
-            lines.push('```json');
-            lines.push(JSON.stringify(func.parameters, null, 2));
-            lines.push('```');
-            lines.push('');
-        }
-    }
-
-    lines.push('# TOOL USAGE');
-    lines.push('To use a tool, you MUST output a JSON object in the following format:');
-    lines.push('```json');
-    lines.push('{ "tool_calls": [ { "name": "tool_name", "arguments": { ... } } ] }');
-    lines.push('```');
-
-    if (toolChoice) {
-        const tcFunc = toolChoice.function || toolChoice;
-        if (typeof toolChoice === 'object' && toolChoice.type === 'function' && tcFunc?.name) {
-            lines.push('');
-            lines.push(`IMPORTANT: You MUST use the tool "${tcFunc.name}" in your response.`);
-        } else if (toolChoice === 'required') {
-            lines.push('');
-            lines.push('IMPORTANT: You MUST use at least one tool in your response.');
-        } else if (toolChoice === 'none') {
-            lines.push('');
-            lines.push('IMPORTANT: Do NOT use any tools in your response.');
-        }
-    }
-
-    return lines.join('\n');
-}
-
-/**
- * Renders response format instructions into a Markdown section.
- */
-function renderResponseFormat(format: any): string {
-    if (!format || typeof format !== 'object') return '';
-
-    if (format.type === 'json_object') {
-        return '# RESPONSE FORMAT\n\nYou must output a JSON object.';
-    }
-
-    if (format.type === 'json_schema' && format.json_schema) {
-        const schema = format.json_schema.schema;
-        const name = format.json_schema.name;
-        const description = format.json_schema.description;
-
-        const lines = ['# RESPONSE FORMAT', ''];
-        lines.push('You must output a JSON object matching the following schema:');
-        if (name) lines.push(`Schema Name: ${name}`);
-        if (description) lines.push(`Description: ${description}`);
-        lines.push('```json');
-        lines.push(JSON.stringify(schema, null, 2));
-        lines.push('```');
-        return lines.join('\n');
-    }
-
-    return '';
-}
-
-/**
  * Extracts the user prompt from the request body.
  * Supports simple strings, OpenAI-like message arrays, and prompt/input fields.
  */
 function extractUserPrompt(body: any): string | null {
     if (!body) return null;
 
-    // Helper: normalize OpenAI-style content into text
     function extractText(content: any): string | null {
         if (!content) return null;
 
         if (typeof content === 'string') {
-            return content.trim() || null;
+            const trimmed = content.trim();
+            return trimmed ? trimmed : null;
+        }
+
+        if (typeof content === 'object' && typeof content.text === 'string') {
+            const trimmed = content.text.trim();
+            return trimmed ? trimmed : null;
         }
 
         if (Array.isArray(content)) {
             const parts: string[] = [];
             for (const part of content) {
-                if (!part) continue;
-                if (typeof part === 'string') {
-                    if (part.trim()) parts.push(part.trim());
-                } else if (typeof part.text === 'string' && part.text.trim()) {
-                    parts.push(part.text.trim());
-                }
+                const text = extractText(part);
+                if (text) parts.push(text);
             }
-            return parts.join('\n').trim() || null;
+            if (parts.length) {
+                const joined = parts.join('\n').trim();
+                return joined ? joined : null;
+            }
         }
 
         return null;
     }
 
-    let userPrompt: string | null = null;
-    const systemMessages: string[] = [];
-    const toolsSection = renderTools(body.tools, body.tool_choice);
-    const responseFormatSection = renderResponseFormat(body.response_format);
+    const fromMessages = (messages: any): string | null => {
+        if (!Array.isArray(messages)) return null;
+        const userMessages: string[] = [];
 
-    // Fast paths
-    if (typeof body.input === 'string' && body.input.trim()) {
-        userPrompt = body.input.trim();
-    } else if (typeof body.prompt === 'string' && body.prompt.trim()) {
-        userPrompt = body.prompt.trim();
-    } else {
-        // OpenAI-ish shape
-        const input = body.input;
-        if (Array.isArray(input)) {
-            const userMessages: string[] = [];
+        for (const msg of messages) {
+            if (!msg) continue;
+            const role = typeof msg.role === 'string' ? msg.role.toLowerCase() : 'user';
+            if (role !== 'user') continue;
 
-            for (const msg of input) {
-                if (!msg || !msg.role) continue;
-
-                const role = String(msg.role).toLowerCase();
-                const text = extractText(msg.content);
-                if (!text) continue;
-
-                if (role === 'user') {
-                    userMessages.push(text);
-                } else if (role === 'system' || role === 'developer') {
-                    systemMessages.push(text);
-                }
-            }
-
-            if (userMessages.length > 0) {
-                userPrompt = userMessages.join('\n\n').trim();
+            const text = extractText(msg.content ?? msg.message ?? msg.text);
+            if (text) {
+                userMessages.push(text);
             }
         }
+
+        if (userMessages.length === 0) return null;
+        return userMessages.join('\n\n').trim() || null;
+    };
+
+    if (typeof body.input === 'string' && body.input.trim()) {
+        return body.input.trim();
     }
 
-    if (!userPrompt) return null;
-
-    const sections: string[] = [];
-
-    const combinedSystemText = systemMessages.join('\n\n').trim();
-    if (combinedSystemText) {
-        sections.push(`# INSTRUCTION\n\n${combinedSystemText}`);
+    if (typeof body.prompt === 'string' && body.prompt.trim()) {
+        return body.prompt.trim();
     }
 
-    if (toolsSection) {
-        sections.push(toolsSection);
-    }
+    const listPrompt = fromMessages(body.input);
+    if (listPrompt) return listPrompt;
 
-    if (responseFormatSection) {
-        sections.push(responseFormatSection);
-    }
+    const messagePrompt = fromMessages(body.messages);
+    if (messagePrompt) return messagePrompt;
 
-    sections.push(`# REQUEST\n\n${userPrompt}`);
-
-    if (sections.length === 1 && !combinedSystemText && !toolsSection && !responseFormatSection) {
-        return userPrompt;
-    }
-
-    return sections.join('\n\n');
+    return null;
 }
 
 /**
@@ -212,14 +110,11 @@ function createResponseObject(id: string, createdAt: number, body: any, prompt: 
         prompt_cache_key: null,
         prompt_cache_retention: null,
         reasoning: {effort: 'none', summary: null},
-        response_format: body?.response_format ?? null,
         safety_identifier: null,
         service_tier: 'default',
         store: true,
         temperature: typeof body?.temperature === 'number' ? body.temperature : 1.0,
         text: {format: {type: 'text'}, verbosity: 'medium'},
-        tool_choice: body?.tool_choice ?? 'auto',
-        tools: Array.isArray(body?.tools) ? body.tools : [],
         top_logprobs: 0,
         top_p: typeof body?.top_p === 'number' ? body.top_p : 1.0,
         truncation: 'disabled',
@@ -235,13 +130,24 @@ function createResponseObject(id: string, createdAt: number, body: any, prompt: 
 /**
  * Handles streaming responses (SSE).
  */
+function sendPromptToExtension(
+    id: string,
+    createdAt: number,
+    prompt: string,
+    createTemporaryChat: boolean
+): boolean {
+    const type = createTemporaryChat ? 'prompt.new' : 'prompt';
+    return sendToSoleClient({type, id, created: createdAt, input: prompt});
+}
+
 function handleStreamingResponse(
     id: string,
     createdAt: number,
     prompt: string,
     responseObj: any,
     messageItemId: string,
-    timeoutMs: number
+    timeoutMs: number,
+    createTemporaryChat: boolean
 ): Response {
     const encoder = new TextEncoder();
     const cors = corsHeaders();
@@ -269,7 +175,7 @@ function handleStreamingResponse(
                 messageItemId,
             });
 
-            const ok = sendToSoleClient({type: 'prompt', id, created: createdAt, input: prompt});
+            const ok = sendPromptToExtension(id, createdAt, prompt, createTemporaryChat);
             if (!ok) {
                 emitResponseCompleted('error', {error: 'Failed to send prompt to WS client'});
                 inflightTerminate('response.error', {
@@ -314,7 +220,8 @@ async function handleJsonResponse(
     responseObj: any,
     messageItemId: string,
     timeoutMs: number,
-    cors: Record<string, string>
+    cors: Record<string, string>,
+    createTemporaryChat: boolean
 ): Promise<Response> {
     try {
         const result = await new Promise<any>((resolve, reject) => {
@@ -340,7 +247,7 @@ async function handleJsonResponse(
                 jsonReject: reject,
             });
 
-            const ok = sendToSoleClient({type: 'prompt', id, created: createdAt, input: prompt});
+            const ok = sendPromptToExtension(id, createdAt, prompt, createTemporaryChat);
             if (!ok) {
                 emitResponseCompleted('error', {error: 'Failed to send prompt to WS client'});
                 inflightTerminate(null, null);
@@ -374,13 +281,19 @@ async function handleJsonResponse(
 }
 
 /**
- * Controller for POST /responses
+ * Shared implementation details for /responses endpoints.
  */
-export async function handlePostResponses(
+type ResponseHandlerOptions = {
+    createTemporaryChat: boolean;
+};
+
+async function handleResponsesRequest(
     req: Request,
     cfg: AppConfig,
-    url: URL
+    url: URL,
+    opts: ResponseHandlerOptions
 ): Promise<Response> {
+    const {createTemporaryChat} = opts;
     const cors = corsHeaders();
 
     if (getInflight()) {
@@ -434,7 +347,8 @@ export async function handlePostResponses(
             prompt,
             responseObj,
             messageItemId,
-            timeoutMs
+            timeoutMs,
+            createTemporaryChat
         );
     } else {
         return handleJsonResponse(
@@ -444,7 +358,30 @@ export async function handlePostResponses(
             responseObj,
             messageItemId,
             timeoutMs,
-            cors
+            cors,
+            createTemporaryChat
         );
     }
+}
+
+/**
+ * Controller for POST /responses (reuses existing chat)
+ */
+export function handlePostResponses(
+    req: Request,
+    cfg: AppConfig,
+    url: URL
+): Promise<Response> {
+    return handleResponsesRequest(req, cfg, url, {createTemporaryChat: false});
+}
+
+/**
+ * Controller for POST /responses/new (forces new temporary chat)
+ */
+export function handlePostResponsesNew(
+    req: Request,
+    cfg: AppConfig,
+    url: URL
+): Promise<Response> {
+    return handleResponsesRequest(req, cfg, url, {createTemporaryChat: true});
 }

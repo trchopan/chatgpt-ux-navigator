@@ -15,7 +15,7 @@
     let pageHookInjected = false;
 
     // Prompt queue to serialize "new chat -> inject -> submit"
-    /** @type {Array<{id?:string, created?:number, input:string}>} */
+    /** @type {Array<{id?:string, created?:number, input:string, newTemporaryChat?:boolean}>} */
     const promptQueue = [];
     let promptProcessing = false;
 
@@ -125,14 +125,18 @@
                     const prompt = String(item?.input ?? '');
                     if (!prompt.trim()) continue;
 
-                    // 1) Start new temporary chat (best-effort)
-                    try {
-                        const nc = window.CGPT_NAV.newChat;
-                        if (nc?.startNewTemporaryChat) {
-                            await nc.startNewTemporaryChat();
+                    const needsTemporaryChat = !!item?.newTemporaryChat;
+
+                    // 1) Start new temporary chat if requested (best-effort)
+                    if (needsTemporaryChat) {
+                        try {
+                            const nc = window.CGPT_NAV.newChat;
+                            if (nc?.startNewTemporaryChat) {
+                                await nc.startNewTemporaryChat();
+                            }
+                        } catch (_) {
+                            // Non-fatal: if this fails, still try to inject into whatever chat is present
                         }
-                    } catch (_) {
-                        // Non-fatal: if this fails, still try to inject into whatever chat is present
                     }
 
                     // 2) Wait for navigation/UI mount so composer exists
@@ -180,10 +184,13 @@
             const prompt = typeof msg?.input === 'string' ? msg.input : '';
             if (!prompt.trim()) return;
 
+            const requiresTempChat = msg?.type === 'prompt.new' || msg?.newChat === true;
+
             promptQueue.push({
                 id: msg?.id,
                 created: msg?.created,
                 input: prompt,
+                newTemporaryChat: requiresTempChat,
             });
 
             // Kick processor (fire-and-forget)
@@ -203,8 +210,8 @@
 
             // Expected:
             // { type: "prompt", id: "...", created: <unix>, input: "..." }
-            if (msg.type === 'prompt') {
-                // Always create a new temporary chat before injecting
+            // { type: "prompt.new", ... } // -> request a fresh temporary chat first
+            if (msg.type === 'prompt' || msg.type === 'prompt.new') {
                 enqueuePromptMessage(msg);
                 return;
             }

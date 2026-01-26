@@ -36,7 +36,8 @@ This file provides context and guidelines for AI agents working on this codebase
         - `GET /list`: Lists available prompt files.
         - `GET /prompt/:filename`: Returns processed prompt content.
         - `POST /prompt/:filename`: Appends assistant response to the file.
-        - `POST /responses`: Pushes user prompt to extension via WebSocket (supports SSE streaming).
+        - `POST /responses`: Streams assistant output using the current ChatGPT conversation (no forced reset).
+        - `POST /responses/new`: Same as `/responses` but starts a temporary chat before injecting the prompt.
         - `GET /ws`: WebSocket endpoint for extension communication.
 
 ## Development Workflow
