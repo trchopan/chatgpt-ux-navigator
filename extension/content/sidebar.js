@@ -152,6 +152,34 @@
         renderPromptMessages(threadMessages);
     }
 
+    function calculateTotalTokens() {
+        const {entryById, order} = model.getState();
+        let totalLen = 0;
+        for (const id of order) {
+            const entry = entryById.get(id);
+            if (!entry || !entry.anchor) continue;
+
+            let node = entry.anchor;
+            // Attempt to narrow down to the role node for cleaner text
+            if (node.querySelector) {
+                const roleNode = node.querySelector('[data-message-author-role]');
+                if (roleNode) node = roleNode;
+            }
+            const text = node.textContent || '';
+            totalLen += text.length;
+        }
+        // Heuristic: ~4 chars per token
+        return Math.ceil(totalLen / 4);
+    }
+
+    function updateTokenCount() {
+        const el = document.getElementById('cgpt-nav-token-count');
+        if (!el) return;
+        const count = calculateTotalTokens();
+        el.textContent = `${count.toLocaleString()} tokens`;
+        el.title = `Estimated ~${count.toLocaleString()} tokens in current thread`;
+    }
+
     // ----------------------------
     // Code selection sync
     // ----------------------------
@@ -243,13 +271,14 @@
     <div class="prompts-body" id="cgpt-nav-prompts-body"></div>
 </div>
 
-<div class="filters">
-	<div class="filters-checkboxes">
-		<label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
-		<label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
-	</div>
-	<button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
-</div>
+    <div class="filters">
+        <div class="filters-checkboxes">
+            <label><input id="cgpt-nav-filter-user" type="checkbox" checked /> User</label>
+            <label><input id="cgpt-nav-filter-assistant" type="checkbox" checked /> Assistant</label>
+            <span id="cgpt-nav-token-count" style="font-size: 11px; opacity: 0.7; margin-left: 12px; align-self: center;">0 tokens</span>
+        </div>
+        <button id="cgpt-nav-refresh" title="Refresh list">🔄</button>
+    </div>
 
 <div class="list" id="cgpt-nav-list"></div>
         `;
@@ -799,6 +828,7 @@
             renumberIndices();
         }
 
+        updateTokenCount();
         applySelectedCodeHighlight();
     }
 
@@ -819,6 +849,7 @@
 
         renumberIndices();
         applyFiltersToRenderedItems();
+        updateTokenCount();
         applySelectedCodeHighlight();
     }
 
