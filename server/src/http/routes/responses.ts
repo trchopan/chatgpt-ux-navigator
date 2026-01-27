@@ -1,4 +1,5 @@
 import type {AppConfig} from '../../config/config';
+import {applyPromptTemplate} from '../../prompts/resolveIncludes';
 import {getSoleClient, sendToSoleClient} from '../../ws/hub';
 import {
     getInflight,
@@ -320,8 +321,8 @@ async function handleResponsesRequest(
         });
     }
 
-    const prompt = extractUserPrompt(body);
-    if (!prompt) {
+    const rawPrompt = extractUserPrompt(body);
+    if (!rawPrompt) {
         return new Response(
             JSON.stringify({
                 error: 'Missing user prompt. Provide {input:"..."} or {input:[{role:"user",content:"..."}]}.',
@@ -329,6 +330,8 @@ async function handleResponsesRequest(
             {status: 400, headers: {...cors, 'Content-Type': 'application/json'}}
         );
     }
+
+    const prompt = await applyPromptTemplate(rawPrompt, cfg.filesRoot);
 
     const requestedStream = body?.stream === true;
     const shouldStream = requestedStream && !cfg.noStream;

@@ -2,7 +2,7 @@
     "input": [
         {
             "role": "user",
-            "content": "How about Iphone 16 Pro Max?"
+            "content": "Review this code\n\n@src/fs/tree.ts"
         }
     ]
 }

@@ -1,5 +1,9 @@
 prompts/
 
+### Allow tracking the server prompt helpers
+!server/src/prompts/
+!server/src/prompts/**
+
 ######################################
 # Node / Package Managers
 ######################################
@@ -82,4 +86,3 @@ logs/
 Thumbs.db
 ehthumbs.db
 Icon?
-
