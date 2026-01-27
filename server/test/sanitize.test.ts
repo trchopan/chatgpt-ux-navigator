@@ -17,8 +17,8 @@ describe('sanitizeAssistantText', () => {
 
     it('returns suffix between markers and removes extra trailing links', () => {
         const raw =
-            'search("How about Iphone 16 Pro Max?")finished_successfullyHere’s the clean answer. finished_successfullyhttps://example.com';
-        expect(sanitizeAssistantText(raw)).toBe('Here’s the clean answer.');
+            'search("How about Iphone 16 Pro Max?")finished_successfullyHere\'s the clean answer. finished_successfullyhttps://example.com';
+        expect(sanitizeAssistantText(raw)).toBe("Here's the clean answer.");
     });
 
     it('returns empty when only marker remains', () => {
