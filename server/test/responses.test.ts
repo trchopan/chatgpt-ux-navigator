@@ -298,4 +298,28 @@ describe('POST /responses', () => {
         expect(item.tool_calls).toBeDefined();
         expect(item.tool_calls[0].name).toBe('foo');
     });
+
+    it('sanitizes finished_successfully markers in final response text', async () => {
+        const mockSend = mock((msg: string) => {
+            const current = getInflight();
+            if (current) {
+                current.lastText = 'v1The final answer finished_successfully';
+                emitResponseCompleted('completed');
+                inflightTerminate();
+            }
+        });
+
+        setSoleClient({send: mockSend} as any);
+
+        const req = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Cleanup markers'}),
+        });
+
+        const res = await handlePostResponses(req, config, new URL(req.url));
+        const body = await res.json() as any;
+
+        expect(body.status).toBe('completed');
+        expect(body.output_text).toBe('The final answer');
+    });
 });

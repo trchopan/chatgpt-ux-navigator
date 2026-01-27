@@ -3,6 +3,7 @@ import type {WsData} from '../types/ws';
 import {setSoleClient} from './hub';
 import {safeParseJson} from './parse';
 import {extractTextUpdateFromChatGPTPayload, computeDelta} from './extract';
+import {sanitizeAssistantText} from '../http/responses/sanitize';
 import {
     getInflight,
     inflightTerminate,
@@ -37,12 +38,13 @@ export const websocketHandlers = {
 
         // If a /responses call is in-flight, forward extension stream events into OpenAI SSE.
         const inflight = getInflight();
-        if (inflight) {
-            if (t === 'sse') {
-                const upd = extractTextUpdateFromChatGPTPayload(obj);
+            if (inflight) {
+                if (t === 'sse') {
+                    const upd = extractTextUpdateFromChatGPTPayload(obj);
 
-                if (upd && typeof upd.text === 'string' && upd.text.length > 0) {
-                    if (upd.mode === 'full') {
+                    if (upd && typeof upd.text === 'string' && upd.text.length > 0) {
+                        console.log('[responses] sse update', {mode: upd.mode, text: upd.text});
+                        if (upd.mode === 'full') {
                         const fullText = upd.text;
                         const delta = computeDelta(fullText, inflight.lastText);
 
@@ -66,6 +68,10 @@ export const websocketHandlers = {
                 }
             } else if (t === 'done') {
                 const full = typeof inflight.lastText === 'string' ? inflight.lastText : '';
+                const sanitizedFull = sanitizeAssistantText(full);
+                console.log(
+                    '[responses] done raw=' + JSON.stringify(full) + ' sanitized=' + JSON.stringify(sanitizedFull)
+                );
 
                 emitOutputTextDone(full);
                 emitContentPartDone(full);
@@ -76,6 +82,11 @@ export const websocketHandlers = {
                 return;
             } else if (t === 'closed') {
                 const full = typeof inflight.lastText === 'string' ? inflight.lastText : '';
+                const sanitizedFull = sanitizeAssistantText(full);
+                console.log(
+                    '[responses] stream_closed raw=' + JSON.stringify(full) +
+                        ' sanitized=' + JSON.stringify(sanitizedFull)
+                );
 
                 emitOutputTextDone(full);
                 emitContentPartDone(full);

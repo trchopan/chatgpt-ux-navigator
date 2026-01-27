@@ -1,6 +1,7 @@
 import {sseFrame} from './sse';
 import type {ResponseObject} from '../../types/responses';
 import {parseToolCallsFromText} from '../../prompts/parser';
+import {sanitizeAssistantText} from './sanitize';
 
 type InflightMode = 'stream' | 'json';
 
@@ -288,6 +289,7 @@ export function emitOutputItemDone(fullText: string) {
     if (!inflight) return;
 
     const {text: cleanText, tool_calls} = parseToolCallsFromText(fullText);
+    const sanitizedText = sanitizeAssistantText(cleanText);
 
     const item: any = {
         id: inflight.messageItemId,
@@ -298,7 +300,7 @@ export function emitOutputItemDone(fullText: string) {
                 type: 'output_text',
                 annotations: [],
                 logprobs: [],
-                text: cleanText,
+                text: sanitizedText,
             },
         ],
         role: 'assistant',
@@ -340,7 +342,7 @@ export function emitResponseCompleted(status: ResponseObject['status'], extra?: 
 
     if (typeof inflight.lastText === 'string') {
         const {text: cleanText} = parseToolCallsFromText(inflight.lastText);
-        inflight.response.output_text = cleanText;
+        inflight.response.output_text = sanitizeAssistantText(cleanText);
     }
 
     if (extra) {

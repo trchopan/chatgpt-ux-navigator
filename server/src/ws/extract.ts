@@ -1,5 +1,15 @@
 export type ExtractedTextUpdate = {mode: 'full'; text: string} | {mode: 'delta'; text: string};
 
+const SKIPPED_TYPES = [
+    'grouped_webpages',
+    'web_page',
+    'webpage',
+    'web_page_result',
+    'source',
+    'citation',
+    'search_result',
+];
+
 function asNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     return value.length > 0 ? value : null;
@@ -10,8 +20,22 @@ function mergeFragments(values: Array<string | null>): string | null {
     return fragments.length ? fragments.join('') : null;
 }
 
+function getTypeIdentifier(value: any): string | null {
+    if (!value || typeof value !== 'object') return null;
+    const candidate = typeof value.type === 'string' ? value.type : typeof value.content_type === 'string' ? value.content_type : null;
+    return candidate ? candidate.toLowerCase() : null;
+}
+
+function isBlockedType(value: any): boolean {
+    const type = getTypeIdentifier(value);
+    if (!type) return false;
+    return SKIPPED_TYPES.some(block => type.includes(block));
+}
+
 function textFromContent(parts: any): string | null {
     if (!parts) return null;
+
+    if (isBlockedType(parts)) return null;
 
     if (typeof parts === 'string') {
         return parts.length ? parts : null;
@@ -23,6 +47,8 @@ function textFromContent(parts: any): string | null {
     }
 
     if (typeof parts !== 'object') return null;
+
+    if (isBlockedType(parts)) return null;
 
     const directKeys = ['text', 'value', 'content', 'literal'];
     for (const key of directKeys) {
@@ -140,6 +166,8 @@ function extractFromTypedEvent(data: any, type: string): ExtractedTextUpdate | n
 function extractFromStructuredPayload(data: any): ExtractedTextUpdate | null {
     if (data == null) return null;
 
+    if (isBlockedType(data)) return null;
+
     if (typeof data === 'string') {
         return data.length ? {mode: 'delta', text: data} : null;
     }
@@ -147,6 +175,7 @@ function extractFromStructuredPayload(data: any): ExtractedTextUpdate | null {
     if (Array.isArray(data)) {
         const fragments: string[] = [];
         for (const entry of data) {
+            if (isBlockedType(entry)) continue;
             const nested = extractFromStructuredPayload(entry);
             if (nested) {
                 fragments.push(nested.text);
@@ -169,15 +198,6 @@ function extractFromStructuredPayload(data: any): ExtractedTextUpdate | null {
         if (typed) return typed;
     }
 
-    if ('v' in (data as any)) {
-        const v = (data as any).v;
-        if (typeof v === 'string') {
-            return v.length ? {mode: 'delta', text: v} : null;
-        }
-        const nested = extractFromStructuredPayload(v);
-        if (nested) return nested;
-    }
-
     const messageText = textFromMessage((data as any).message);
     if (messageText) return {mode: 'full', text: messageText};
 
@@ -196,6 +216,15 @@ function extractFromStructuredPayload(data: any): ExtractedTextUpdate | null {
 
     const choiceDelta = textFromContent((data as any).choices?.[0]?.delta?.content);
     if (choiceDelta) return {mode: 'delta', text: choiceDelta};
+
+    if ('v' in (data as any)) {
+        const v = (data as any).v;
+        if (typeof v === 'string') {
+            return v.length ? {mode: 'delta', text: v} : null;
+        }
+        const nested = extractFromStructuredPayload(v);
+        if (nested) return nested;
+    }
 
     return null;
 }
