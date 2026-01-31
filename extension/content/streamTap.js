@@ -13,6 +13,7 @@
 
     let enabled = false;
     let pageHookInjected = false;
+    let currentClientId = null;
 
     // Prompt queue to serialize "new chat -> inject -> submit"
     /** @type {Array<{id?:string, created?:number, input:string, newTemporaryChat?:boolean}>} */
@@ -38,15 +39,26 @@
         }, backoffMs);
     }
 
-    function connectWs() {
+    function connectWs(clientId) {
         if (!enabled) return;
+
+        // Store clientId for reconnection logic
+        if (clientId) {
+            currentClientId = clientId;
+        }
 
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
             return;
         }
 
+        // Build WS URL with clientId query parameter if provided
+        let wsUrl = WS_URL;
+        if (currentClientId) {
+            wsUrl = `${WS_URL}?clientId=${encodeURIComponent(currentClientId)}`;
+        }
+
         try {
-            ws = new WebSocket(WS_URL);
+            ws = new WebSocket(wsUrl);
         } catch (_) {
             scheduleReconnect();
             return;
@@ -59,6 +71,7 @@
                 safeJsonStringify({
                     type: 'hello',
                     source: 'cgpt-nav',
+                    clientId: currentClientId,
                     at: Date.now(),
                 })
             );
@@ -235,7 +248,7 @@
         if (!enabled) return;
 
         const payload = safeJsonStringify(obj);
-        if (!ws || !wsOpen) connectWs();
+        if (!ws || !wsOpen) connectWs(currentClientId);
 
         if (ws && ws.readyState === WebSocket.OPEN) {
             try {
@@ -310,15 +323,20 @@
         });
     }
 
-    function enable() {
+    function enable(clientId) {
         if (enabled) return;
         enabled = true;
+
+        // Store clientId for WS connection
+        if (clientId) {
+            currentClientId = clientId;
+        }
 
         // Hook window message listener (for pageHook events)
         window.addEventListener('message', onWindowMessage);
 
         // Start WS + inject page hook
-        connectWs();
+        connectWs(currentClientId);
         injectPageHook();
     }
 
@@ -343,6 +361,7 @@
         enable,
         disable,
         isEnabled,
+        getClientId: () => currentClientId,
         reconnect: connectWs,
     };
 })();

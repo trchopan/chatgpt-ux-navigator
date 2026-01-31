@@ -27,8 +27,35 @@
 }
 
 #cgpt-nav header {
-    padding: 10px 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+     padding: 10px 10px;
+     border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#cgpt-nav .client-id-row {
+     display: flex;
+     padding: 8px 10px;
+     border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#cgpt-nav #cgpt-nav-ws-client-id {
+     width: 100%;
+     background: rgba(255, 255, 255, 0.08);
+     color: #fff;
+     border: 1px solid rgba(255, 255, 255, 0.12);
+     border-radius: 8px;
+     padding: 6px 10px;
+     font-size: 12px;
+     font-family: inherit;
+}
+
+#cgpt-nav #cgpt-nav-ws-client-id::placeholder {
+     opacity: 0.55;
+}
+
+#cgpt-nav #cgpt-nav-ws-client-id:focus {
+     outline: none;
+     background: rgba(255, 255, 255, 0.12);
+     border-color: rgba(255, 255, 255, 0.24);
 }
 
 #cgpt-nav .header-row {
@@ -51,16 +78,27 @@
 }
 
 #cgpt-nav button {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
-    padding: 6px 8px;
-    font-size: 12px;
-    cursor: pointer;
+     background: rgba(255, 255, 255, 0.1);
+     color: #fff;
+     border: 1px solid rgba(255, 255, 255, 0.12);
+     border-radius: 8px;
+     padding: 6px 8px;
+     font-size: 12px;
+     cursor: pointer;
 }
 #cgpt-nav button:hover {
-    background: rgba(255, 255, 255, 0.16);
+     background: rgba(255, 255, 255, 0.16);
+}
+
+#cgpt-nav button:disabled {
+     background: rgba(255, 255, 255, 0.05);
+     color: rgba(255, 255, 255, 0.5);
+     border-color: rgba(255, 255, 255, 0.08);
+     cursor: not-allowed;
+}
+
+#cgpt-nav button:disabled:hover {
+     background: rgba(255, 255, 255, 0.05);
 }
 
 #cgpt-nav .filters {

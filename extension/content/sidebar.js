@@ -3,13 +3,14 @@
     const {C, dom, store, model, scroll, prompts, clipboard, markdown, chatInput, newChat} =
         window.CGPT_NAV;
 
-    // --- DOM caches for sidebar rendering
-    /** @type {Map<string, HTMLElement>} */
-    const domItemById = new Map(); // entryId -> sidebar item element
-    let selectedFilename = null;
-    let activeId = null;
-    let selectedCodeId = null;
-    let isWsEnabled = false;
+     // --- DOM caches for sidebar rendering
+     /** @type {Map<string, HTMLElement>} */
+     const domItemById = new Map(); // entryId -> sidebar item element
+     let selectedFilename = null;
+     let activeId = null;
+     let selectedCodeId = null;
+     let isWsEnabled = false;
+     let clientId = ''; // WebSocket client ID state
 
     // --- Prompt section state
     /** @type {{filename:string, at:number, threadMessages:{role:'user'|'assistant', content:string}[]} | null} */
@@ -241,19 +242,28 @@
         const root = document.createElement('div');
         root.id = C.EXT_ID;
 
-        root.innerHTML = `
+         root.innerHTML = `
 <header>
-    <div class="header-row">
-        <div class="title">Navigator</div>
+     <div class="header-row">
+         <div class="title">Navigator</div>
 
-        <div class="controls">
-			<button id="cgpt-nav-ws-toggle" title="Toggle WebSocket mode">🔌❌</button>
-			<button id="cgpt-nav-new-temp-chat" title="New temporary chat">🆕</button>
-            <button id="cgpt-nav-save-response" title="Save response">💾</button>
-            <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
-            <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
-        </div>
-    </div>
+         <div class="controls">
+ 			<button id="cgpt-nav-ws-toggle" title="Toggle WebSocket mode" disabled>🔌❌</button>
+ 			<button id="cgpt-nav-new-temp-chat" title="New temporary chat">🆕</button>
+             <button id="cgpt-nav-save-response" title="Save response">💾</button>
+             <button id="cgpt-nav-copy-thread" title="Copy full thread as Markdown">📋</button>
+             <button id="cgpt-nav-hide" title="Hide sidebar">✖️</button>
+         </div>
+     </div>
+
+     <div class="client-id-row">
+         <input 
+             id="cgpt-nav-ws-client-id" 
+             type="text" 
+             placeholder="Client ID (e.g., research-chat)" 
+             title="WebSocket client ID for multi-client support"
+         />
+     </div>
 </header>
 
 <div class="prompts" id="cgpt-nav-prompts">
@@ -354,15 +364,32 @@
         });
 
         select?.addEventListener('change', () => {
-            selectedFilename = select.value || null;
-            clearThreadCache();
+             selectedFilename = select.value || null;
+             clearThreadCache();
 
-            if (!selectedFilename) {
-                renderPromptMessages([]);
-                return;
-            }
-            if (promptsOpen) ensureThreadLoaded(true);
-        });
+             if (!selectedFilename) {
+                 renderPromptMessages([]);
+                 return;
+             }
+             if (promptsOpen) ensureThreadLoaded(true);
+         });
+
+         // Client ID input handler
+         function updateClientIdState() {
+             const input = dom.$('#cgpt-nav-ws-client-id');
+             if (!input) return;
+
+             clientId = input.value.trim();
+             const hasClientId = clientId.length > 0;
+             const wsBtn = dom.$('#cgpt-nav-ws-toggle');
+             if (wsBtn) {
+                 wsBtn.disabled = !hasClientId;
+             }
+         }
+
+         const clientIdInput = dom.$('#cgpt-nav-ws-client-id');
+         clientIdInput?.addEventListener('input', updateClientIdState);
+         clientIdInput?.addEventListener('change', updateClientIdState);
 
         // Hide sidebar
         dom.$('#cgpt-nav-hide')?.addEventListener('click', () => {
@@ -474,18 +501,23 @@
                 : 'WebSocket mode is OFF (no local WS connection)';
         }
 
-        dom.$('#cgpt-nav-ws-toggle')?.addEventListener('click', () => {
-            isWsEnabled = !isWsEnabled;
+         dom.$('#cgpt-nav-ws-toggle')?.addEventListener('click', () => {
+             const btn = document.getElementById('cgpt-nav-ws-toggle');
+             if (btn?.disabled || !clientId) {
+                 return;
+             }
 
-            // Apply immediately in this tab
-            try {
-                if (isWsEnabled) window.CGPT_NAV.streamTap?.enable?.();
-                else window.CGPT_NAV.streamTap?.disable?.();
-            } catch (_) {}
+             isWsEnabled = !isWsEnabled;
 
-            syncWsToggleButton(isWsEnabled);
-            updateWsUiState(isWsEnabled);
-        });
+             // Apply immediately in this tab
+             try {
+                 if (isWsEnabled) window.CGPT_NAV.streamTap?.enable?.();
+                 else window.CGPT_NAV.streamTap?.disable?.();
+             } catch (_) {}
+
+             syncWsToggleButton(isWsEnabled);
+             updateWsUiState(isWsEnabled);
+         });
 
         // Save last assistant response
         dom.$('#cgpt-nav-save-response')?.addEventListener('click', async () => {
@@ -860,16 +892,17 @@
         renderAll(true);
     }
 
-    window.CGPT_NAV.sidebar = {
-        ensureShowButton,
-        createSidebar,
-        hideSidebar,
-        showSidebar,
-        renderAll,
-        renderFromModelIncremental,
-        applyFiltersToRenderedItems,
-        renumberIndices,
-        setActiveId,
-        resetList,
-    };
+     window.CGPT_NAV.sidebar = {
+         ensureShowButton,
+         createSidebar,
+         hideSidebar,
+         showSidebar,
+         renderAll,
+         renderFromModelIncremental,
+         applyFiltersToRenderedItems,
+         renumberIndices,
+         setActiveId,
+         resetList,
+         getClientId: () => clientId,
+     };
 })();
