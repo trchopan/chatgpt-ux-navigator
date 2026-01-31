@@ -34,8 +34,12 @@ export function startServer(cfg: AppConfig): void {
 
             // WebSocket upgrade
             if (req.method === 'GET' && url.pathname === '/ws') {
+                const clientId = url.searchParams.get('clientId');
+                if (!clientId) {
+                    return new Response('Missing clientId query parameter', {status: 400});
+                }
                 const ok = server.upgrade(req, {
-                    data: {id: crypto.randomUUID()},
+                    data: {id: crypto.randomUUID(), clientId},
                 });
                 return ok
                     ? new Response(null, {status: 101})

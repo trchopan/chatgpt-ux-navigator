@@ -1,6 +1,6 @@
 import type {ServerWebSocket} from 'bun';
 import type {WsData} from '../types/ws';
-import {setSoleClient} from './hub';
+import {setClient, removeClient, getClient} from './hub';
 import {safeParseJson} from './parse';
 import {extractTextUpdateFromChatGPTPayload, computeDelta} from './extract';
 import {
@@ -16,8 +16,12 @@ import {
 
 export const websocketHandlers = {
     open(ws: ServerWebSocket<WsData>) {
-        // Single-client assumption: newest connection wins.
-        setSoleClient(ws as unknown as WebSocket);
+        const clientId = ws.data.clientId;
+        if (!clientId) {
+            ws.close();
+            return;
+        }
+        setClient(clientId, ws as unknown as WebSocket);
         ws.send(JSON.stringify({type: 'welcome', at: Date.now()}));
     },
 
@@ -96,6 +100,10 @@ export const websocketHandlers = {
     },
 
     close(ws: ServerWebSocket<WsData>) {
+        const clientId = ws.data.clientId;
+        if (clientId) {
+            removeClient(clientId);
+        }
         const inflight = getInflight();
         if (inflight) {
             emitResponseCompleted('error', {error: 'WebSocket closed'});
