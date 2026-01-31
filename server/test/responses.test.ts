@@ -1,7 +1,7 @@
 import {describe, it, expect, beforeEach, afterEach, mock} from 'bun:test';
-import {handlePostResponses, handlePostResponsesNew} from '../src/http/routes/responses';
+import {handlePostResponses, handlePostResponsesNew, handlePostResponsesById, handlePostResponsesByIdNew} from '../src/http/routes/responses';
 import type {AppConfig} from '../src/config/config';
-import {setSoleClient} from '../src/ws/hub';
+import {setSoleClient, setClient, removeClient} from '../src/ws/hub';
 import {
     getInflight,
     inflightTerminate,
@@ -321,5 +321,160 @@ describe('POST /responses', () => {
 
         expect(body.status).toBe('completed');
         expect(body.output_text).toBe('The final answer');
+    });
+});
+
+// --- Multi-client tests ---
+describe('POST /responses/:clientId (multi-client)', () => {
+    afterEach(() => {
+        // Cleanup all clients and inflight
+        removeClient('client-a');
+        removeClient('client-b');
+        removeClient('client-x');
+        inflightTerminate('client-a', null, null);
+        inflightTerminate('client-b', null, null);
+        inflightTerminate('client-x', null, null);
+    });
+
+    it('should handle parallel requests to different clients (no 409)', async () => {
+        // Mock two clients that immediately complete on send
+        const mockSendA = mock(() => {
+            const current = getInflight('client-a');
+            if (current) {
+                current.response.status = 'completed';
+                current.response.completed_at = Math.floor(Date.now() / 1000);
+                inflightTerminate('client-a', 'response.completed', {});
+            }
+        });
+        const mockSendB = mock(() => {
+            const current = getInflight('client-b');
+            if (current) {
+                current.response.status = 'completed';
+                current.response.completed_at = Math.floor(Date.now() / 1000);
+                inflightTerminate('client-b', 'response.completed', {});
+            }
+        });
+        
+        setClient('client-a', {send: mockSendA} as any);
+        setClient('client-b', {send: mockSendB} as any);
+
+        // POST to both clients in parallel
+        const reqA = new Request('http://localhost/responses/client-a', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Request to A'}),
+        });
+        const reqB = new Request('http://localhost/responses/client-b', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Request to B'}),
+        });
+
+        const [resA, resB] = await Promise.all([
+            handlePostResponsesById(reqA, config, new URL(reqA.url)),
+            handlePostResponsesById(reqB, config, new URL(reqB.url))
+        ]);
+
+        // Both should succeed
+        expect(resA.status).toBe(200);
+        expect(resB.status).toBe(200);
+        const bodyA = await resA.json() as any;
+        const bodyB = await resB.json() as any;
+        expect(bodyA.status).toBe('completed');
+        expect(bodyB.status).toBe('completed');
+    });
+
+    it('should return 404 when target client not connected', async () => {
+        // Don't register any client with ID 'nonexistent'
+
+        const req = new Request('http://localhost/responses/nonexistent', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Hello'}),
+        });
+
+        const res = await handlePostResponsesById(req, config, new URL(req.url));
+
+        expect(res.status).toBe(404);
+        const body = await res.json() as any;
+        expect(body.error).toContain('not connected');
+    });
+
+    it('should return 409 for concurrent requests to same client', async () => {
+        // Mock one client that doesn't immediately complete
+        const mockWs = {send: mock(() => {})} as any;
+        setClient('client-x', mockWs);
+
+        // Start first request (it will hang waiting for completion)
+        const req1 = new Request('http://localhost/responses/client-x', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Req 1'}),
+        });
+        const p1 = handlePostResponsesById(req1, config, new URL(req1.url));
+
+        // Allow microtask queue to process so inflight is set
+        await new Promise(r => setTimeout(r, 10));
+
+        // Start second request to same client
+        const req2 = new Request('http://localhost/responses/client-x', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Req 2'}),
+        });
+        const res2 = await handlePostResponsesById(req2, config, new URL(req2.url));
+
+        expect(res2.status).toBe(409);
+        const body2 = await res2.json() as any;
+        expect(body2.error).toContain('in-flight');
+        expect(body2.error).toContain('client-x');
+
+        // Cleanup: terminate inflight to let p1 resolve
+        const currentInflight = getInflight('client-x');
+        if (currentInflight) {
+            currentInflight.response.status = 'completed';
+            currentInflight.response.completed_at = Math.floor(Date.now() / 1000);
+        }
+        inflightTerminate('client-x', 'response.completed', {});
+        try {
+            await p1;
+        } catch {}
+    });
+});
+
+describe('POST /responses (backward compat)', () => {
+    afterEach(() => {
+        setSoleClient(null);
+        inflightTerminate(null, null);
+    });
+
+    it('should return 503 when no sole client and using old route', async () => {
+        setSoleClient(null);
+
+        const req = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Hello'}),
+        });
+
+        const res = await handlePostResponses(req, config, new URL(req.url));
+        expect(res.status).toBe(503);
+    });
+
+    it('should work with setSoleClient for backward compat', async () => {
+        const mockSend = mock((msg: string) => {
+            const current = getInflight();
+            if (current) {
+                emitResponseCompleted('completed');
+                inflightTerminate();
+            }
+        });
+        setSoleClient({send: mockSend} as any);
+
+        const req = new Request('http://localhost/responses', {
+            method: 'POST',
+            body: JSON.stringify({input: 'Hello backward compat'}),
+        });
+
+        const res = await handlePostResponses(req, config, new URL(req.url));
+
+        expect(res.status).toBe(200);
+        const body = await res.json() as any;
+        expect(body.status).toBe('completed');
+        expect(mockSend).toHaveBeenCalled();
     });
 });
