@@ -8,13 +8,16 @@ async function sendRequest() {
     const userMessage = markdownContent.trim();
 
     const command = process.argv[2]; // Get the command from command line arguments
+    const channelId = process.argv[3]; // Get the channel ID from command line arguments
 
     let requestBody: any;
     let endpoint: string;
 
     switch (command) {
         case 'new':
-            endpoint = 'http://localhost:8765/responses/new';
+            endpoint = channelId
+                ? `http://localhost:8765/responses/${channelId}/new`
+                : 'http://localhost:8765/responses/new';
             requestBody = {
                 input: [
                     {
@@ -26,7 +29,9 @@ async function sendRequest() {
             break;
         case 'message':
         default: // Default to send-message if no command or unknown command
-            endpoint = 'http://localhost:8765/responses';
+            endpoint = channelId
+                ? `http://localhost:8765/responses/${channelId}`
+                : 'http://localhost:8765/responses';
             requestBody = {
                 input: [
                     {

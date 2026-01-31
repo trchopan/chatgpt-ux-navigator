@@ -511,7 +511,7 @@
 
              // Apply immediately in this tab
              try {
-                 if (isWsEnabled) window.CGPT_NAV.streamTap?.enable?.();
+                 if (isWsEnabled) window.CGPT_NAV.streamTap?.enable?.(clientId);
                  else window.CGPT_NAV.streamTap?.disable?.();
              } catch (_) {}
 
