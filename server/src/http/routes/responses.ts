@@ -1,6 +1,6 @@
 import type {AppConfig} from '../../config/config';
 import {applyPromptTemplate} from '../../prompts/resolveIncludes';
-import {getSoleClient, sendToSoleClient} from '../../ws/hub';
+import {getSoleClient, sendToSoleClient, getClient, sendToClient} from '../../ws/hub';
 import {
     getInflight,
     createInflight,
@@ -135,10 +135,17 @@ function sendPromptToExtension(
     id: string,
     createdAt: number,
     prompt: string,
-    createTemporaryChat: boolean
+    createTemporaryChat: boolean,
+    clientId?: string
 ): boolean {
     const type = createTemporaryChat ? 'prompt.new' : 'prompt';
-    return sendToSoleClient({type, id, created: createdAt, input: prompt});
+    const msg = {type, id, created: createdAt, input: prompt};
+    
+    if (clientId) {
+        return sendToClient(clientId, msg);
+    } else {
+        return sendToSoleClient(msg);
+    }
 }
 
 function handleStreamingResponse(
@@ -148,7 +155,8 @@ function handleStreamingResponse(
     responseObj: any,
     messageItemId: string,
     timeoutMs: number,
-    createTemporaryChat: boolean
+    createTemporaryChat: boolean,
+    clientId?: string
 ): Response {
     const encoder = new TextEncoder();
     const cors = corsHeaders();
@@ -156,47 +164,60 @@ function handleStreamingResponse(
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
             const timeoutHandle = setTimeout(() => {
-                if (!getInflight()) return;
+                if (!getInflight(clientId)) return;
 
-                emitResponseCompleted('error', {error: 'Timed out waiting for extension SSE'});
-                inflightTerminate('response.error', {
+                emitResponseCompleted(clientId, 'error', {error: 'Timed out waiting for extension SSE'});
+                inflightTerminate(clientId, 'response.error', {
                     type: 'response.error',
                     error: {message: 'Timed out waiting for extension SSE'},
                 });
             }, timeoutMs);
 
-            createInflight({
-                id,
-                createdAt,
-                mode: 'stream',
-                controller,
-                encoder,
-                timeoutHandle,
-                response: responseObj,
-                messageItemId,
-            });
+            if (clientId) {
+                createInflight(clientId, {
+                    id,
+                    createdAt,
+                    mode: 'stream',
+                    controller,
+                    encoder,
+                    timeoutHandle,
+                    response: responseObj,
+                    messageItemId,
+                });
+            } else {
+                createInflight({
+                    id,
+                    createdAt,
+                    mode: 'stream',
+                    controller,
+                    encoder,
+                    timeoutHandle,
+                    response: responseObj,
+                    messageItemId,
+                });
+            }
 
-            const ok = sendPromptToExtension(id, createdAt, prompt, createTemporaryChat);
+            const ok = sendPromptToExtension(id, createdAt, prompt, createTemporaryChat, clientId);
             if (!ok) {
-                emitResponseCompleted('error', {error: 'Failed to send prompt to WS client'});
-                inflightTerminate('response.error', {
+                emitResponseCompleted(clientId, 'error', {error: 'Failed to send prompt to WS client'});
+                inflightTerminate(clientId, 'response.error', {
                     type: 'response.error',
                     error: {message: 'Failed to send prompt to WS client'},
                 });
                 return;
             }
 
-            emitResponseCreated();
-            emitResponseInProgress();
-            emitOutputItemAdded();
-            emitContentPartAdded();
+            emitResponseCreated(clientId);
+            emitResponseInProgress(clientId);
+            emitOutputItemAdded(clientId);
+            emitContentPartAdded(clientId);
         },
 
         cancel() {
-            const currentInflight = getInflight();
+            const currentInflight = getInflight(clientId);
             if (currentInflight && currentInflight.id === id) {
-                emitResponseCompleted('cancelled', {reason: 'client_disconnected'});
-                inflightTerminate('response.cancelled', {
+                emitResponseCompleted(clientId, 'cancelled', {reason: 'client_disconnected'});
+                inflightTerminate(clientId, 'response.cancelled', {
                     type: 'response.cancelled',
                     response_id: id,
                     error: {message: 'Client disconnected'},
@@ -222,44 +243,60 @@ async function handleJsonResponse(
     messageItemId: string,
     timeoutMs: number,
     cors: Record<string, string>,
-    createTemporaryChat: boolean
+    createTemporaryChat: boolean,
+    clientId?: string
 ): Promise<Response> {
     try {
         const result = await new Promise<any>((resolve, reject) => {
             const timeoutHandle = setTimeout(() => {
-                const current = getInflight();
+                const current = getInflight(clientId);
                 if (current && current.id === id) {
-                    emitResponseCompleted('error', {error: 'Timed out waiting for extension SSE'});
-                    inflightTerminate(null, null);
+                    emitResponseCompleted(clientId, 'error', {error: 'Timed out waiting for extension SSE'});
+                    inflightTerminate(clientId, null, null);
                 }
                 reject(new Error('Timed out waiting for completion'));
             }, timeoutMs);
 
-            createInflight({
-                id,
-                createdAt,
-                mode: 'json',
-                controller: null,
-                encoder: null,
-                timeoutHandle,
-                response: responseObj,
-                messageItemId,
-                jsonResolve: resolve,
-                jsonReject: reject,
-            });
+            if (clientId) {
+                createInflight(clientId, {
+                    id,
+                    createdAt,
+                    mode: 'json',
+                    controller: null,
+                    encoder: null,
+                    timeoutHandle,
+                    response: responseObj,
+                    messageItemId,
+                    jsonResolve: resolve,
+                    jsonReject: reject,
+                });
+            } else {
+                createInflight({
+                    id,
+                    createdAt,
+                    mode: 'json',
+                    controller: null,
+                    encoder: null,
+                    timeoutHandle,
+                    response: responseObj,
+                    messageItemId,
+                    jsonResolve: resolve,
+                    jsonReject: reject,
+                });
+            }
 
-            const ok = sendPromptToExtension(id, createdAt, prompt, createTemporaryChat);
+            const ok = sendPromptToExtension(id, createdAt, prompt, createTemporaryChat, clientId);
             if (!ok) {
-                emitResponseCompleted('error', {error: 'Failed to send prompt to WS client'});
-                inflightTerminate(null, null);
+                emitResponseCompleted(clientId, 'error', {error: 'Failed to send prompt to WS client'});
+                inflightTerminate(clientId, null, null);
                 reject(new Error('Failed to send prompt to WS client'));
                 return;
             }
 
-            emitResponseCreated();
-            emitResponseInProgress();
-            emitOutputItemAdded();
-            emitContentPartAdded();
+            emitResponseCreated(clientId);
+            emitResponseInProgress(clientId);
+            emitOutputItemAdded(clientId);
+            emitContentPartAdded(clientId);
         });
 
         return new Response(JSON.stringify(result, null, 2), {
@@ -275,7 +312,7 @@ async function handleJsonResponse(
             error: {message},
         };
         return new Response(JSON.stringify(errorResponse, null, 2), {
-            status: 200, // Or 500? The original code returns 200 with error field
+            status: 200,
             headers: {...cors, 'Content-Type': 'application/json; charset=utf-8'},
         });
     }
@@ -286,6 +323,7 @@ async function handleJsonResponse(
  */
 type ResponseHandlerOptions = {
     createTemporaryChat: boolean;
+    clientId?: string;
 };
 
 async function handleResponsesRequest(
@@ -294,21 +332,36 @@ async function handleResponsesRequest(
     url: URL,
     opts: ResponseHandlerOptions
 ): Promise<Response> {
-    const {createTemporaryChat} = opts;
+    const {createTemporaryChat, clientId} = opts;
     const cors = corsHeaders();
 
-    if (getInflight()) {
+    // Check inflight for specific clientId (or default if no clientId)
+    if (getInflight(clientId)) {
+        const clientDisplay = clientId ? `'${clientId}'` : 'default';
         return new Response(
-            JSON.stringify({error: 'Another /responses request is already in-flight.'}),
+            JSON.stringify({error: `Another request in-flight for client ${clientDisplay}.`}),
             {status: 409, headers: {...cors, 'Content-Type': 'application/json'}}
         );
     }
 
-    if (!getSoleClient()) {
-        return new Response(JSON.stringify({error: 'No WebSocket client connected (/ws).'}), {
-            status: 503,
-            headers: {...cors, 'Content-Type': 'application/json'},
-        });
+    // If clientId provided, verify client is connected
+    let targetClient: WebSocket | null = null;
+    if (clientId) {
+        targetClient = getClient(clientId);
+        if (!targetClient) {
+            return new Response(
+                JSON.stringify({error: `Client '${clientId}' not connected.`}),
+                {status: 404, headers: {...cors, 'Content-Type': 'application/json'}}
+            );
+        }
+    } else {
+        // Old behavior: check sole client
+        if (!getSoleClient()) {
+            return new Response(JSON.stringify({error: 'No WebSocket client connected (/ws).'}), {
+                status: 503,
+                headers: {...cors, 'Content-Type': 'application/json'},
+            });
+        }
     }
 
     let body: any;
@@ -351,7 +404,8 @@ async function handleResponsesRequest(
             responseObj,
             messageItemId,
             timeoutMs,
-            createTemporaryChat
+            createTemporaryChat,
+            clientId
         );
     } else {
         return handleJsonResponse(
@@ -362,7 +416,8 @@ async function handleResponsesRequest(
             messageItemId,
             timeoutMs,
             cors,
-            createTemporaryChat
+            createTemporaryChat,
+            clientId
         );
     }
 }
@@ -387,4 +442,53 @@ export function handlePostResponsesNew(
     url: URL
 ): Promise<Response> {
     return handleResponsesRequest(req, cfg, url, {createTemporaryChat: true});
+}
+
+/**
+ * Controller for POST /responses/:id (per-client, reuses existing chat)
+ */
+export async function handlePostResponsesById(
+    req: Request,
+    cfg: AppConfig,
+    url: URL
+): Promise<Response> {
+    const pathParts = url.pathname.split('/');
+    const clientId = pathParts[pathParts.length - 1];
+
+    if (!clientId || clientId.trim() === '') {
+        return new Response(
+            JSON.stringify({error: 'Client ID is required in the URL path'}),
+            {
+                status: 400,
+                headers: {'Content-Type': 'application/json'},
+            }
+        );
+    }
+
+    return handleResponsesRequest(req, cfg, url, {createTemporaryChat: false, clientId});
+}
+
+/**
+ * Controller for POST /responses/:id/new (per-client, forces new temporary chat)
+ */
+export async function handlePostResponsesByIdNew(
+    req: Request,
+    cfg: AppConfig,
+    url: URL
+): Promise<Response> {
+    const pathParts = url.pathname.split('/');
+    pathParts.pop();
+    const clientId = pathParts[pathParts.length - 1];
+
+    if (!clientId || clientId.trim() === '') {
+        return new Response(
+            JSON.stringify({error: 'Client ID is required in the URL path'}),
+            {
+                status: 400,
+                headers: {'Content-Type': 'application/json'},
+            }
+        );
+    }
+
+    return handleResponsesRequest(req, cfg, url, {createTemporaryChat: true, clientId});
 }

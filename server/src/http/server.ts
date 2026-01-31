@@ -3,7 +3,7 @@ import {corsHeaders, handleOptions} from './cors';
 import {Router} from './router';
 import {handleIndex} from './routes/indexRoute';
 import {handleListPrompts, handleGetPrompt, handlePostPrompt} from './routes/prompts';
-import {handlePostResponses, handlePostResponsesNew} from './routes/responses';
+import {handlePostResponses, handlePostResponsesNew, handlePostResponsesById, handlePostResponsesByIdNew} from './routes/responses';
 import {websocketHandlers} from '../ws/handler';
 import type {WsData} from '../types/ws';
 import type {Server} from 'bun';
@@ -16,14 +16,11 @@ export function startServer(cfg: AppConfig): void {
     router.get('/list', handleListPrompts);
     router.get(/\/prompt\/.+/, handleGetPrompt);
     router.post(/\/prompt\/.+/, handlePostPrompt);
+    router.post(/\/responses\/[^\/]+\/new/, handlePostResponsesByIdNew);
+    router.post(/\/responses\/[^\/]+/, handlePostResponsesById);
     router.post('/responses/new', handlePostResponsesNew);
     router.post('/responses', handlePostResponses);
 
-    // Global OPTIONS handler (or per-route if preferred, but global is easier for CORS)
-    // We can add a catch-all options handler or specific ones.
-    // Since the router checks method, we can add a generic options handler?
-    // The Router class as written iterates. So if we want a global OPTIONS, we might need a wildcard path.
-    // But regex /.*/ works.
     router.options(/.*/, handleOptions);
 
     Bun.serve<WsData>({
