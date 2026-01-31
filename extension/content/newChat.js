@@ -226,6 +226,8 @@
             return {ok: false, temp: false, error: 'Could not find the “New chat” button.'};
         }
 
+        window.CGPT_NAV.sidebar?.resetList?.();
+
         // Wait a moment for navigation/transition
         await sleep(1500);
 

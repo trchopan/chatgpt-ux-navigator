@@ -195,6 +195,11 @@
         order.push(...freshIds);
     }
 
+    function reset() {
+        entryById.clear();
+        order.length = 0;
+    }
+
     function getState() {
         return {entryById, order};
     }
@@ -202,6 +207,7 @@
     window.CGPT_NAV.model = {
         upsertFromRoleNode,
         fullRescan,
+        reset,
         getState,
     };
 })();

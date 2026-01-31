@@ -853,6 +853,13 @@
         applySelectedCodeHighlight();
     }
 
+    function resetList() {
+        model.reset();
+        activeId = null;
+        selectedCodeId = null;
+        renderAll(true);
+    }
+
     window.CGPT_NAV.sidebar = {
         ensureShowButton,
         createSidebar,
@@ -863,5 +870,6 @@
         applyFiltersToRenderedItems,
         renumberIndices,
         setActiveId,
+        resetList,
     };
 })();
