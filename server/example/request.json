@@ -1,8 +1,0 @@
-{
-    "input": [
-        {
-            "role": "user",
-            "content": "Review this code\n\n@src/fs/tree.ts"
-        }
-    ]
-}
