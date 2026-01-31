@@ -178,9 +178,13 @@ export function inflightTerminate(
     let finalEvent: string | null;
     let finalData: any;
 
-    if (typeof finalEventOrClientId === 'string' && typeof finalDataOrEvent === 'string') {
+    if (
+        typeof finalEventOrClientId === 'string' &&
+        clientIdOrFinalData !== undefined &&
+        finalEventOrClientId !== defaultClientId
+    ) {
         clientId = finalEventOrClientId;
-        finalEvent = finalDataOrEvent;
+        finalEvent = typeof finalDataOrEvent === 'string' ? finalDataOrEvent : null;
         finalData = clientIdOrFinalData;
     } else {
         clientId = undefined;

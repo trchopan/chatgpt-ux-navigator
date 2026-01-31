@@ -38,9 +38,10 @@ export const websocketHandlers = {
         }
 
         const t = String(obj.type || '');
+        const clientId = ws.data.clientId;
 
-        // If a /responses call is in-flight, forward extension stream events into OpenAI SSE.
-        const inflight = getInflight();
+        const inflight = getInflight(clientId);
+
         if (inflight) {
             if (t === 'sse') {
                 const upd = extractTextUpdateFromChatGPTPayload(obj);
@@ -53,48 +54,44 @@ export const websocketHandlers = {
                         if (delta) {
                             inflight.lastText = fullText;
                             inflight.response.output_text = fullText;
-                            emitOutputTextDelta(delta);
+                            emitOutputTextDelta(clientId, delta);
                         }
-                        // If delta is null, text didn't change; do nothing.
                     } else {
-                        // delta-only mode: append
                         const delta = upd.text;
                         inflight.lastText = (inflight.lastText || '') + delta;
                         inflight.response.output_text = inflight.lastText;
-                        emitOutputTextDelta(delta);
+                        emitOutputTextDelta(clientId, delta);
                     }
                 } else {
-                    // No text extracted; pass through as a generic OpenAI-like event (optional)
-                    // This is useful for debugging unknown payload shapes.
-                    emitGenericEvent(obj);
+                    emitGenericEvent(clientId, obj);
                 }
             } else if (t === 'done') {
                 const full = typeof inflight.lastText === 'string' ? inflight.lastText : '';
-                emitOutputTextDone(full);
-                emitContentPartDone(full);
-                emitOutputItemDone(full);
+                emitOutputTextDone(clientId, full);
+                emitContentPartDone(clientId, full);
+                emitOutputItemDone(clientId, full);
 
-                emitResponseCompleted('completed');
-                inflightTerminate(null, null);
+                emitResponseCompleted(clientId, 'completed');
+                inflightTerminate(clientId, null, null);
                 return;
             } else if (t === 'closed') {
                 const full = typeof inflight.lastText === 'string' ? inflight.lastText : '';
-                emitOutputTextDone(full);
-                emitContentPartDone(full);
-                emitOutputItemDone(full);
+                emitOutputTextDone(clientId, full);
+                emitContentPartDone(clientId, full);
+                emitOutputItemDone(clientId, full);
 
-                emitResponseCompleted('completed', {reason: 'stream_closed'});
-                inflightTerminate(null, null);
+                emitResponseCompleted(clientId, 'completed', {reason: 'stream_closed'});
+                inflightTerminate(clientId, null, null);
                 return;
             } else if (t === 'error') {
-                emitResponseCompleted('error', {reason: 'extension_error'});
-                inflightTerminate('response.error', {
+                emitResponseCompleted(clientId, 'error', {reason: 'extension_error'});
+                inflightTerminate(clientId, 'response.error', {
                     type: 'response.error',
                     error: {message: 'Extension reported error', detail: obj},
                 });
                 return;
             } else {
-                emitGenericEvent(obj);
+                emitGenericEvent(clientId, obj);
             }
         }
     },
@@ -104,10 +101,10 @@ export const websocketHandlers = {
         if (clientId) {
             removeClient(clientId);
         }
-        const inflight = getInflight();
+        const inflight = getInflight(clientId);
         if (inflight) {
-            emitResponseCompleted('error', {error: 'WebSocket closed'});
-            inflightTerminate('response.error', {
+            emitResponseCompleted(clientId, 'error', {error: 'WebSocket closed'});
+            inflightTerminate(clientId, 'response.error', {
                 type: 'response.error',
                 error: {message: 'WebSocket closed'},
             });
